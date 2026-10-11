@@ -51,11 +51,13 @@ function normalize(d) {
 }
 
 function save() {
+  db.updatedAt = new Date().toISOString();
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(db));
   } catch (e) {
     alert('ডেটা সেভ করা যায়নি: ' + e.message);
   }
+  scheduleSync();
 }
 
 let db = load();
@@ -200,6 +202,62 @@ function grade(pct) {
   return ['F', 'red'];
 }
 
+/* ---------- ক্লাস রুটিন ---------- */
+const DAY_NAMES = ['রবি', 'সোম', 'মঙ্গল', 'বুধ', 'বৃহস্পতি', 'শুক্র', 'শনি']; // JS getDay() অনুযায়ী
+const WEEK_ORDER = [6, 0, 1, 2, 3, 4, 5]; // শনিবার থেকে সপ্তাহ শুরু
+const bnDigits = (str) => String(str).replace(/\d/g, (d) => '০১২৩৪৫৬৭৮৯'[d]);
+
+function fmtTime(t) {
+  if (!t) return '';
+  const [h, mi] = t.split(':').map(Number);
+  const period = h < 4 ? 'রাত' : h < 6 ? 'ভোর' : h < 12 ? 'সকাল' : h < 15 ? 'দুপুর' : h < 18 ? 'বিকাল' : h < 20 ? 'সন্ধ্যা' : 'রাত';
+  return `${period} ${bnDigits(h % 12 || 12)}:${bnDigits(String(mi).padStart(2, '0'))}`;
+}
+
+const daysOf = (x) => (Array.isArray(x?.days) ? x.days.map(Number) : []);
+
+function fmtSchedule(x) {
+  const days = daysOf(x);
+  if (!days.length) return x?.schedule || '';
+  const d = days.length === 7 ? 'প্রতিদিন' : WEEK_ORDER.filter((i) => days.includes(i)).map((i) => DAY_NAMES[i]).join(', ');
+  return d + (x.time ? ' · ' + fmtTime(x.time) : '');
+}
+
+/** একটা মাসে নির্ধারিত দিনগুলোতে মোট কয়টা ক্লাস পড়ে */
+function classesInMonth(days, month) {
+  if (!days.length) return 0;
+  const [y, m] = month.split('-').map(Number);
+  const last = new Date(y, m, 0).getDate();
+  let n = 0;
+  for (let d = 1; d <= last; d++) if (days.includes(new Date(y, m - 1, d).getDay())) n++;
+  return n;
+}
+
+/** সব ক্লাস: প্রতিটা ব্যাচ আর প্রতিটা সক্রিয় ওয়ান-টু-ওয়ান স্টুডেন্ট */
+function classSessions() {
+  const out = [];
+  for (const b of db.batches) {
+    const n = db.students.filter((s) => !isOne2One(s) && s.batchId === b.id && s.status !== 'inactive').length;
+    out.push({ key: 'b' + b.id, title: b.name, sub: `ব্যাচ · ${num(n)} জন`, teacherId: b.teacherId, days: daysOf(b), time: b.time || '', link: b.classLink, raw: b });
+  }
+  for (const s of db.students) {
+    if (!isOne2One(s) || s.status === 'inactive') continue;
+    out.push({ key: 's' + s.id, title: s.name, sub: 'ওয়ান-টু-ওয়ান' + (s.course ? ' · ' + s.course : ''), teacherId: s.teacherId, days: daysOf(s), time: s.time || '', link: s.classLink, raw: s });
+  }
+  return out;
+}
+
+const byTime = (a, b) => (a.time || '99').localeCompare(b.time || '99');
+
+function sessionRows(list, withClash = true) {
+  return list.map((c) => {
+    const clash = withClash && c.teacherId && c.time && list.some((o) => o !== c && o.teacherId === c.teacherId && o.time === c.time);
+    return `<tr><td><b>${fmtTime(c.time) || '—'}</b></td><td><b>${esc(c.title)}</b><br><span class="muted">${esc(c.sub)}</span></td>
+      <td>${esc(teacherName(c.teacherId))}${clash ? ' <span class="badge red">⚠️ একই সময়ে আরেকটা ক্লাস</span>' : ''}</td>
+      <td class="actions">${c.link ? `<a class="btn sm primary" target="_blank" rel="noopener" href="${esc(c.link)}">ক্লাসে যান</a>` : '<span class="muted">লিংক নেই</span>'}</td></tr>`;
+  });
+}
+
 const pctOf = (e) => (Number(e.total) ? (Number(e.marks) / Number(e.total)) * 100 : 0);
 
 /* ---------- reminders ---------- */
@@ -269,6 +327,9 @@ function openForm({ title, fields, values = {}, submitLabel = 'সেভ কর�
       input = `<select name="${f.name}" ${req}>${opts(f.options, v, f.placeholder)}</select>`;
     } else if (f.type === 'textarea') {
       input = `<textarea name="${f.name}" ${req}>${esc(v)}</textarea>`;
+    } else if (f.type === 'days') {
+      const sel = Array.isArray(v) ? v.map(Number) : [];
+      input = `<div class="days">${WEEK_ORDER.map((d) => `<label><input type="checkbox" name="${f.name}" value="${d}" ${sel.includes(d) ? 'checked' : ''}> ${DAY_NAMES[d]}</label>`).join('')}</div>`;
     } else {
       const extra = f.type === 'number' ? 'min="0" step="any"' : '';
       input = `<input type="${f.type || 'text'}" name="${f.name}" value="${esc(v)}" ${req} ${extra}>`;
@@ -280,6 +341,7 @@ function openForm({ title, fields, values = {}, submitLabel = 'সেভ কর�
   modalSubmit = (fd) => {
     const out = {};
     for (const f of fields) {
+      if (f.type === 'days') { out[f.name] = fd.getAll(f.name).map(Number); continue; }
       const raw = fd.get(f.name);
       out[f.name] = f.type === 'number' ? (raw === '' ? 0 : Number(raw)) : String(raw ?? '').trim();
     }
@@ -322,6 +384,7 @@ const state = {
   progressStudent: '',
   progressBatch: '',
   reportMonth: thisMonth(),
+  routineTeacher: '',
 };
 
 /* ---------- views ---------- */
@@ -351,9 +414,18 @@ views.dashboard = () => {
     <b>শিক্ষক → ব্যাচ → স্টুডেন্ট</b> এই ক্রমে যোগ করুন (ওয়ান-টু-ওয়ান স্টুডেন্টের জন্য ব্যাচ লাগে না)। শুধু দেখার জন্য চাইলে
     <button class="btn sm" data-action="load-demo">ডেমো ডেটা লোড করুন</button></div>` : '';
 
+  const todayIdx = new Date().getDay();
+  const todays = classSessions().filter((c) => c.days.includes(todayIdx)).sort(byTime);
+
+  const syncWarn = !syncOn() && hasData(db) && !db.settings.academyName.includes('(ডেমো)')
+    ? '<div class="note">⚠️ ডেটা এখনো শুধু এই ডিভাইসে আছে। হারানো ঠেকাতে <a href="#settings">সেটিংস</a> থেকে <b>অনলাইন ব্যাকআপ</b> চালু করুন।</div>' : '';
+
   return `
     <h2>ড্যাশবোর্ড — ${monthLabel(m)}</h2>
-    ${firstRun}
+    ${syncWarn}${firstRun}
+    <h3>📅 আজকের ক্লাস — ${DAY_NAMES[todayIdx]}বার, ${fmtDate(today())}</h3>
+    ${table(['সময়', 'ক্লাস', 'শিক্ষক', ['', 'actions']], sessionRows(todays), 'আজ কোনো ক্লাস নির্ধারিত নেই')}
+    <h3>এ মাসের হিসাব</h3>
     <div class="cards">
       ${card('এ মাসের আয়', tk(t.income), 'green')}
       ${card('এ মাসের ব্যয়', tk(t.expense), 'red')}
@@ -417,7 +489,7 @@ views.batches = () => {
   const rows = db.batches.map((b) => {
     const count = db.students.filter((s) => !isOne2One(s) && s.batchId === b.id && s.status !== 'inactive').length;
     return `<tr><td><b>${esc(b.name)}</b></td><td>${esc(b.subject)}</td><td>${esc(teacherName(b.teacherId))}</td>
-      <td>${esc(b.schedule)}</td><td class="num">${tk(b.fee)}</td><td class="num">${num(count)}</td>
+      <td>${esc(fmtSchedule(b))}</td><td class="num">${tk(b.fee)}</td><td class="num">${num(count)}</td>
       <td class="actions">
         ${b.classLink ? `<a class="btn sm" target="_blank" rel="noopener" href="${esc(b.classLink)}">ক্লাস লিংক</a>` : ''}
         <button class="btn sm" data-action="edit-batch" data-id="${b.id}">এডিট</button>
@@ -439,9 +511,11 @@ views.teachers = () => {
     const students = activeOf(t);
     const o2o = students.filter(isOne2One);
     const collected = sum(db.payments.filter((p) => p.month === m && students.some((s) => s.id === p.studentId)));
+    const monthClasses = classSessions().filter((c) => c.teacherId === t.id).reduce((a, c) => a + classesInMonth(c.days, m), 0);
     return `<tr><td><b>${esc(t.name)}</b><br><span class="muted">${esc(t.phone)}</span></td><td>${esc(t.subject)}</td>
       <td>${batches.map((b) => esc(b.name)).join(', ') || '—'}</td>
       <td class="num">${num(o2o.length)}</td><td class="num">${num(students.length)}</td>
+      <td class="num">${num(monthClasses)}</td>
       <td class="num">${tk(collected)}</td>
       <td class="num">${t.salary ? tk(t.salary) : '—'}</td>
       <td class="actions">
@@ -456,10 +530,10 @@ views.teachers = () => {
     const batches = db.batches.filter((b) => b.teacherId === t.id);
     const batchHtml = batches.map((b) => {
       const st = db.students.filter((s) => !isOne2One(s) && s.batchId === b.id && s.status !== 'inactive' && (!s.teacherId || s.teacherId === t.id));
-      return `<li><b>${esc(b.name)}</b> <span class="muted">(${num(st.length)} জন${b.schedule ? ' · ' + esc(b.schedule) : ''})</span></li>`;
+      return `<li><b>${esc(b.name)}</b> <span class="muted">(${num(st.length)} জন${fmtSchedule(b) ? ' · ' + esc(fmtSchedule(b)) : ''})</span></li>`;
     }).join('');
     const o2o = activeOf(t).filter(isOne2One).map((s) =>
-      `<li>${esc(s.name)} <span class="muted">(${esc(s.course || 'ওয়ান-টু-ওয়ান')}${s.schedule ? ' · ' + esc(s.schedule) : ''})</span></li>`).join('');
+      `<li>${esc(s.name)} <span class="muted">(${esc(s.course || 'ওয়ান-টু-ওয়ান')}${fmtSchedule(s) ? ' · ' + esc(fmtSchedule(s)) : ''})</span></li>`).join('');
     const other = activeOf(t).filter((s) => !isOne2One(s) && !batches.some((b) => b.id === s.batchId))
       .map((s) => `<li>${esc(s.name)} <span class="muted">(${esc(classLabel(s))} থেকে আলাদাভাবে)</span></li>`).join('');
     return `<div class="panel"><h3>👩‍🏫 ${esc(t.name)}</h3>
@@ -471,12 +545,37 @@ views.teachers = () => {
   return `
     <h2>শিক্ষক ও এসাইনমেন্ট</h2>
     <div class="toolbar"><span class="spacer"></span><button class="btn primary" data-action="add-teacher">+ নতুন শিক্ষক</button></div>
-    ${table(['নাম', 'বিষয়', 'ব্যাচ', ['ওয়ান-টু-ওয়ান', 'num'], ['মোট স্টুডেন্ট', 'num'], [`${BN_MONTHS[Number(m.slice(5)) - 1]}-এ ফি আদায়`, 'num'], ['নির্দিষ্ট সম্মানী', 'num'], ['', 'actions']], rows, 'এখনো কোনো শিক্ষক যোগ করা হয়নি')}
+    ${table(['নাম', 'বিষয়', 'ব্যাচ', ['ওয়ান-টু-ওয়ান', 'num'], ['মোট স্টুডেন্ট', 'num'], ['এ মাসে ক্লাস', 'num'], [`${BN_MONTHS[Number(m.slice(5)) - 1]}-এ ফি আদায়`, 'num'], ['নির্দিষ্ট সম্মানী', 'num'], ['', 'actions']], rows, 'এখনো কোনো শিক্ষক যোগ করা হয়নি')}
     <p class="muted">"ফি আদায়" কলামে দেখায় ওই শিক্ষকের স্টুডেন্টদের কাছ থেকে এ মাসে কত ফি এসেছে। শিক্ষককে শতাংশ হারে সম্মানী দিলে এটা দেখে হিসাব করতে পারবেন।</p>
     <h3>কোন ব্যাচ/স্টুডেন্ট কার কাছে</h3>
     <p class="muted">ব্যাচে শিক্ষক এসাইন করলে সেই ব্যাচের সব স্টুডেন্ট তাঁর কাছে যায়। ওয়ান-টু-ওয়ান স্টুডেন্টের শিক্ষক স্টুডেন্ট যোগ করার সময়ই বাছাই করা হয়।</p>
     <div class="assign-grid">${cards}</div>
     ${unassigned.length ? `<div class="note">⚠️ ${num(unassigned.length)} জন স্টুডেন্ট কোনো শিক্ষকের কাছে এসাইন করা নেই: ${unassigned.map((s) => esc(s.name)).join(', ')}</div>` : ''}
+  `;
+};
+
+views.routine = () => {
+  const m = thisMonth();
+  const all = classSessions().filter((c) => !state.routineTeacher || c.teacherId === state.routineTeacher);
+  const todayIdx = new Date().getDay();
+  const blocks = WEEK_ORDER.map((d) => {
+    const list = all.filter((c) => c.days.includes(d)).sort(byTime);
+    return `<h3>${DAY_NAMES[d]}বার ${d === todayIdx ? '<span class="badge green">আজ</span>' : ''} <span class="muted" style="font-size:14px">(${num(list.length)}টি ক্লাস)</span></h3>
+      ${table(['সময়', 'ক্লাস', 'শিক্ষক', ['', 'actions']], sessionRows(list), 'এই দিনে কোনো ক্লাস নেই')}`;
+  }).join('');
+  const countRows = all.sort((a, b) => a.title.localeCompare(b.title)).map((c) => `
+    <tr><td><b>${esc(c.title)}</b><br><span class="muted">${esc(c.sub)}</span></td><td>${esc(teacherName(c.teacherId))}</td>
+    <td>${esc(fmtSchedule(c.raw)) || '<span class="badge amber">দিন/সময় ঠিক করা নেই</span>'}</td>
+    <td class="num">${c.days.length ? num(classesInMonth(c.days, m)) : '—'}</td></tr>`);
+  return `
+    <h2>ক্লাস রুটিন (বাংলাদেশ সময়)</h2>
+    <div class="toolbar">
+      <select data-filter="routineTeacher">${opts(db.teachers.map((t) => [t.id, t.name]), state.routineTeacher, 'সব শিক্ষক')}</select>
+    </div>
+    <p class="muted">ব্যাচ বা ওয়ান-টু-ওয়ান স্টুডেন্ট এডিট করে ক্লাসের দিন আর সময় ঠিক করলে রুটিন নিজে থেকেই তৈরি হয়। একই শিক্ষকের একই সময়ে দুটো ক্লাস পড়লে ⚠️ চিহ্ন দেখাবে।</p>
+    ${blocks}
+    <h3>${monthLabel(m)} — নির্ধারিত ক্লাসের সংখ্যা</h3>
+    ${table(['ক্লাস', 'শিক্ষক', 'রুটিন', ['এ মাসে ক্লাস', 'num']], countRows, 'কোনো ক্লাস নেই')}
   `;
 };
 
@@ -693,6 +792,33 @@ views.reports = () => {
   `;
 };
 
+function syncPanel() {
+  if (!syncOn()) {
+    return `<div class="panel" style="border-color:var(--red)">
+      <h3>☁️ অনলাইন ব্যাকআপ — <span class="badge red">বন্ধ</span></h3>
+      <p>এখন সব ডেটা শুধু এই ডিভাইসে আছে। ডিভাইস নষ্ট বা হারিয়ে গেলে ডেটা হারিয়ে যাবে। নিচের ঘর দুটো পূরণ করে চালু করুন।
+      এরপর প্রতিটা পরিবর্তন নিজে থেকে আপনার GitHub-এর <b>Private</b> রিপোজিটরিতে সেভ হবে, আর প্রতিটা সেভের পুরোনো ভার্সনও থেকে যাবে।
+      (কীভাবে রিপোজিটরি আর টোকেন বানাবেন, তা README-তে ধাপে ধাপে লেখা আছে।)</p>
+      <div class="field"><label>ডেটা রিপোজিটরি (ইউজারনেম/রিপোজিটরি)</label><input id="sync-repo" value="${esc(DEFAULT_DATA_REPO)}"></div>
+      <div class="field"><label>GitHub টোকেন (github_pat_… দিয়ে শুরু)</label><input id="sync-token" type="password" autocomplete="off"></div>
+      <button class="btn primary" data-action="sync-connect">চালু করুন</button>
+    </div>`;
+  }
+  const hist = `https://github.com/${sync.repo}/commits/HEAD/${DATA_PATH}`;
+  return `<div class="panel">
+    <h3>☁️ অনলাইন ব্যাকআপ — <span class="badge green">চালু</span></h3>
+    <p>প্রতিটা পরিবর্তন নিজে থেকে <b>${esc(sync.repo)}</b> রিপোজিটরিতে সেভ হচ্ছে।
+    অন্য ফোন বা কম্পিউটারে একই রিপোজিটরি আর টোকেন দিয়ে চালু করলে সেখানেও সব ডেটা চলে আসবে।</p>
+    <p class="muted">শেষ সেভ: ${sync.lastSync ? new Date(sync.lastSync).toLocaleString('bn-BD') : '—'} ${syncMsg ? '<br><b>' + esc(syncMsg) + '</b>' : ''}</p>
+    <div class="toolbar">
+      <button class="btn primary" data-action="sync-now">এখনই সেভ করুন</button>
+      <button class="btn" data-action="sync-pull">অনলাইন থেকে আবার আনুন</button>
+      <a class="btn" target="_blank" rel="noopener" href="${esc(hist)}">🕘 পুরোনো ভার্সনগুলো দেখুন</a>
+      <button class="btn danger" data-action="sync-disconnect">এই ডিভাইসে বন্ধ করুন</button>
+    </div>
+  </div>`;
+}
+
 views.settings = () => {
   const s = db.settings;
   const last = localStorage.getItem(STORE_KEY + '-last-backup');
@@ -707,16 +833,16 @@ views.settings = () => {
         <textarea id="set-template">${esc(s.reminderTemplate)}</textarea></div>
       <button class="btn primary" data-action="save-settings">সেভ করুন</button>
     </div>
+    ${syncPanel()}
     <div class="panel">
-      <h3>💾 ব্যাকআপ (খুবই জরুরি)</h3>
-      <p>সব ডেটা এই ব্রাউজারেই জমা থাকে। ব্রাউজারের হিস্টরি/ডেটা মুছে ফেললে বা ফোন হারালে ডেটা হারিয়ে যেতে পারে।
-      তাই <b>প্রতি সপ্তাহে অন্তত একবার</b> ব্যাকআপ ফাইল ডাউনলোড করে Google Drive-এ রেখে দিন।</p>
+      <h3>💾 ফাইলে ব্যাকআপ (অতিরিক্ত সুরক্ষা)</h3>
+      <p>অনলাইন ব্যাকআপের পাশাপাশি মাসে একবার ব্যাকআপ ফাইল ডাউনলোড করে Google Drive-এ রেখে দিলে আরও নিশ্চিন্ত থাকবেন।</p>
       <p class="muted">শেষ ব্যাকআপ: ${last ? fmtDate(last) : 'কখনো নেওয়া হয়নি'}</p>
       <div class="toolbar">
         <button class="btn primary" data-action="export">⬇️ ব্যাকআপ ডাউনলোড</button>
         <label class="btn">⬆️ ব্যাকআপ থেকে ফেরত আনুন <input type="file" id="import-file" accept=".json,application/json" hidden></label>
       </div>
-      <p class="muted">অন্য কম্পিউটার/ফোনে একই ডেটা চাইলে: এখানে ব্যাকআপ ডাউনলোড করে ওখানে "ফেরত আনুন" দিয়ে ফাইলটা দিন।</p>
+      <p class="muted">"ফেরত আনুন" দিয়ে কোনো ব্যাকআপ ফাইল লোড করলে বর্তমান ডেটা বদলে যাবে (অনলাইন ব্যাকআপ চালু থাকলে সেটাও আপডেট হবে)।</p>
     </div>
     <div class="panel">
       <h3>অন্যান্য</h3>
@@ -744,7 +870,8 @@ function studentForm(s) {
       { name: 'teacherId', label: 'আলাদা শিক্ষক (খালি রাখলে ব্যাচের শিক্ষক)', type: 'select', options: teacherOpts(), placeholder: '— ব্যাচের শিক্ষক —', showIf: ['type', ['batch']] },
       { name: 'one2oneTeacherId', label: 'শিক্ষক', type: 'select', options: teacherOpts(), placeholder: '— শিক্ষক বাছাই করুন —', showIf: ['type', ['one2one']] },
       { name: 'course', label: 'কোর্স/বিষয় (যেমন: আরবি ভাষা, তাজবীদ)', showIf: ['type', ['one2one']] },
-      { name: 'schedule', label: 'ক্লাসের সময়সূচি (বাংলাদেশ সময়, যেমন: সোম/বুধ রাত ৯টা)', showIf: ['type', ['one2one']] },
+      { name: 'days', label: 'ক্লাসের দিন', type: 'days', showIf: ['type', ['one2one']] },
+      { name: 'time', label: 'ক্লাসের সময় (বাংলাদেশ সময়)', type: 'time', showIf: ['type', ['one2one']] },
       { name: 'classLink', label: 'ক্লাস লিংক (Zoom/Meet)', type: 'url', showIf: ['type', ['one2one']] },
       { name: 'monthlyFee', label: 'মাসিক ফি (ব্যাচে খালি রাখলে ব্যাচের ফি বসবে)', type: 'number' },
       { name: 'guardian', label: 'অভিভাবকের নাম (প্রাপ্তবয়স্ক হলে খালি রাখুন)' },
@@ -762,7 +889,7 @@ function studentForm(s) {
         v.teacherId = v.one2oneTeacherId;
         v.batchId = '';
       } else {
-        v.course = ''; v.schedule = ''; v.classLink = '';
+        v.course = ''; v.schedule = ''; v.classLink = ''; v.days = []; v.time = '';
         if (!v.monthlyFee && v.batchId) v.monthlyFee = Number(byId(db.batches, v.batchId)?.fee) || 0;
       }
       delete v.one2oneTeacherId;
@@ -781,7 +908,8 @@ function batchForm(b) {
       { name: 'name', label: 'ব্যাচের নাম (যেমন: আরবি ভাষা — বেসিক, ব্যাচ-৩)', required: true },
       { name: 'subject', label: 'বিষয়' },
       { name: 'teacherId', label: 'দায়িত্বপ্রাপ্ত শিক্ষক', type: 'select', options: teacherOpts(), placeholder: '— শিক্ষক বাছাই করুন —' },
-      { name: 'schedule', label: 'সময়সূচি (বাংলাদেশ সময়, যেমন: শনি/সোম/বুধ রাত ৯টা)' },
+      { name: 'days', label: 'ক্লাসের দিন', type: 'days' },
+      { name: 'time', label: 'ক্লাসের সময় (বাংলাদেশ সময়)', type: 'time' },
       { name: 'classLink', label: 'ক্লাস লিংক (Zoom/Google Meet)', type: 'url' },
       { name: 'fee', label: 'মাসিক ফি (প্রতি স্টুডেন্ট)', type: 'number' },
     ],
@@ -929,9 +1057,9 @@ function demoData() {
   const t2 = T('উস্তাযা মারইয়াম', 'তাজবীদ ও তিলাওয়াত', 0, '01700000002');
   const t3 = T('উস্তায হাসান', 'আরবি ব্যাকরণ', 0, '01700000003');
   d.teachers = [t1, t2, t3];
-  const B = (name, subject, teacherId, schedule, fee) => ({ id: uid(), name, subject, teacherId, schedule, fee, classLink: 'https://meet.google.com/' });
-  const b1 = B('আরবি ভাষা — বেসিক (ব্যাচ-৩)', 'আরবি ভাষা', t1.id, 'শনি/সোম/বুধ — রাত ৯টা', 1500);
-  const b2 = B('তাজবীদ — বোনদের ব্যাচ', 'তাজবীদ', t2.id, 'রবি/মঙ্গল — বিকাল ৪টা', 1200);
+  const B = (name, subject, teacherId, days, time, fee) => ({ id: uid(), name, subject, teacherId, days, time, fee, classLink: 'https://meet.google.com/' });
+  const b1 = B('আরবি ভাষা — বেসিক (ব্যাচ-৩)', 'আরবি ভাষা', t1.id, [6, 1, 3], '21:00', 1500);
+  const b2 = B('তাজবীদ — বোনদের ব্যাচ', 'তাজবীদ', t2.id, [0, 2, 4], '16:00', 1200);
   d.batches = [b1, b2];
   const m = thisMonth();
   const start = shiftMonth(m, -3) + '-01';
@@ -942,9 +1070,9 @@ function demoData() {
     ['নুসরাত জাহান', b2, '01711000004'], ['তাহমিদ ইসলাম', b1, '+966500000005', 'সৌদি আরব'], ['মাহিয়া রহমান', b2, '01711000006'],
   ].map(([name, b, phone, country]) => mk(name, { type: 'batch', batchId: b.id, teacherId: '', monthlyFee: b.fee, phone, country: country || 'বাংলাদেশ' }));
   const o2oSt = [
-    mk('আব্দুর রহমান', { type: 'one2one', teacherId: t2.id, course: 'কুরআন তিলাওয়াত (নাজেরা)', schedule: 'প্রতিদিন সকাল ৭টা', monthlyFee: 3000, guardian: 'জনাব করিম', phone: '01711000007', classLink: 'https://zoom.us/' }),
-    mk('ফাতিমা খাতুন', { type: 'one2one', teacherId: t3.id, course: 'আরবি ব্যাকরণ (নাহু)', schedule: 'সোম/বৃহঃ রাত ১০টা', monthlyFee: 4000, phone: '+12025550108', country: 'যুক্তরাষ্ট্র', email: 'demo@example.com' }),
-    mk('ইমরান খান', { type: 'one2one', teacherId: t1.id, course: 'আরবি কথোপকথন', schedule: 'শুক্র/শনি সন্ধ্যা ৭টা', monthlyFee: 3500, phone: '01711000009' }),
+    mk('আব্দুর রহমান', { type: 'one2one', teacherId: t2.id, course: 'কুরআন তিলাওয়াত (নাজেরা)', days: [0, 1, 2, 3, 4, 5, 6], time: '07:00', monthlyFee: 3000, guardian: 'জনাব করিম', phone: '01711000007', classLink: 'https://zoom.us/' }),
+    mk('ফাতিমা খাতুন', { type: 'one2one', teacherId: t3.id, course: 'আরবি ব্যাকরণ (নাহু)', days: [1, 4], time: '22:00', monthlyFee: 4000, phone: '+12025550108', country: 'যুক্তরাষ্ট্র', email: 'demo@example.com' }),
+    mk('ইমরান খান', { type: 'one2one', teacherId: t1.id, course: 'আরবি কথোপকথন', days: [5, 6], time: '21:00', monthlyFee: 3500, phone: '01711000009' }),
   ];
   d.students = [...batchSt, ...o2oSt];
   d.students.forEach((s, i) => {
@@ -1060,13 +1188,24 @@ const actions = {
   },
   'export-csv': () => exportCsv(),
   print: () => window.print(),
+  'sync-connect': () => connectSync($('#sync-repo').value, $('#sync-token').value),
+  'sync-now': async () => { sync.dirty = true; saveSync(); await pushNow(); render(); if (syncState === 'ok') toast('সেভ হয়েছে'); },
+  'sync-pull': async () => { await pullNow(); render(); },
+  'sync-disconnect': () => {
+    if (sync.dirty && !confirm('কিছু পরিবর্তন এখনো অনলাইনে সেভ হয়নি। তবুও বন্ধ করবেন?')) return;
+    if (!confirm('এই ডিভাইসে অনলাইন ব্যাকআপ বন্ধ হবে (অনলাইনের ডেটা মুছবে না)। নিশ্চিত?')) return;
+    sync = {};
+    saveSync();
+    render();
+  },
   'load-demo': () => {
+    if (syncOn()) return alert('অনলাইন ব্যাকআপ চালু থাকা অবস্থায় ডেমো ডেটা লোড করা যাবে না, কারণ তাতে আসল ডেটার ওপর ডেমো সেভ হয়ে যাবে।');
     if ((db.students.length || db.teachers.length) && !confirm('বর্তমান সব ডেটা মুছে ডেমো ডেটা লোড হবে। নিশ্চিত?')) return;
     db = demoData();
     commit('ডেমো ডেটা লোড হয়েছে');
   },
   reset: () => {
-    if (!confirm('সব ডেটা স্থায়ীভাবে মুছে যাবে! আগে ব্যাকআপ নিয়েছেন তো?')) return;
+    if (!confirm('সব ডেটা মুছে যাবে!' + (syncOn() ? ' (অনলাইনেও খালি ডেটা সেভ হবে, তবে পুরোনো ভার্সন ইতিহাসে থাকবে)' : ' আগে ব্যাকআপ নিয়েছেন তো?'))) return;
     if (prompt('নিশ্চিত হলে নিচে "মুছুন" লিখুন') !== 'মুছুন') return;
     db = defaultData();
     commit('সব ডেটা মুছে ফেলা হয়েছে');
@@ -1115,6 +1254,218 @@ document.addEventListener('change', (e) => {
   reader.readAsText(file);
 });
 
+/* =========================================================
+ * অনলাইন ব্যাকআপ: প্রতিটা পরিবর্তন GitHub-এর একটা PRIVATE
+ * রিপোজিটরিতে (academy-data.json) কমিট হয়ে যায়। প্রতিটা কমিট
+ * একটা করে পুরোনো ভার্সন, তাই যেকোনো সময়ের ডেটা ফেরত আনা যায়।
+ * টোকেন শুধু এই ডিভাইসে থাকে, ব্যাকআপ ফাইলে যায় না।
+ * ========================================================= */
+const SYNC_KEY = 'academy-ms-sync';
+const DATA_PATH = 'academy-data.json';
+const DEFAULT_DATA_REPO = 'mhsiddiqui96/at-turath-data';
+let sync = (() => { try { return JSON.parse(localStorage.getItem(SYNC_KEY)) || {}; } catch { return {}; } })();
+let syncTimer = null;
+let syncBusy = false;
+let syncState = 'idle';
+let syncMsg = '';
+let syncConflicts = 0;
+
+const syncOn = () => !!(sync.repo && sync.token);
+const hasData = (d) => !!(d.students.length || d.teachers.length || d.batches.length || d.payments.length || d.transactions.length);
+function saveSync() { try { localStorage.setItem(SYNC_KEY, JSON.stringify(sync)); } catch (e) { console.error(e); } }
+
+function b64encode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function b64decode(b64) {
+  const bin = atob(b64.replace(/\s/g, ''));
+  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+}
+
+function setSyncState(st, msg = '') {
+  syncState = st;
+  syncMsg = msg;
+  updateSyncBadge();
+}
+
+function updateSyncBadge() {
+  const el = $('#sync-status');
+  if (!el) return;
+  let text, cls = 'sync';
+  if (!syncOn()) { text = '⚠️ অনলাইন ব্যাকআপ বন্ধ'; cls += ' warn'; }
+  else if (syncState === 'pending' || syncState === 'syncing') text = '⏳ সেভ হচ্ছে…';
+  else if (syncState === 'offline') { text = '📴 ইন্টারনেট নেই — পরে সেভ হবে'; cls += ' warn'; }
+  else if (syncState === 'error') { text = '❌ অনলাইনে সেভ হয়নি'; cls += ' error'; }
+  else text = '☁️ অনলাইনে সেভ আছে';
+  el.textContent = text;
+  el.className = cls;
+  el.title = syncMsg || (sync.lastSync ? 'শেষ সেভ: ' + new Date(sync.lastSync).toLocaleString('bn-BD') : '');
+}
+
+function httpError(res) {
+  const e = new Error('HTTP ' + res.status);
+  e.status = res.status;
+  return e;
+}
+
+function gh(method, body, raw) {
+  return fetch(`https://api.github.com/repos/${sync.repo}/contents/${DATA_PATH}`, {
+    method,
+    cache: 'no-store',
+    headers: {
+      Authorization: `Bearer ${sync.token}`,
+      Accept: raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+async function remoteGet() {
+  const res = await gh('GET');
+  if (res.status === 404) return null;
+  if (!res.ok) throw httpError(res);
+  const j = await res.json();
+  let text = j.content ? b64decode(j.content) : '';
+  if (!text) { // ১ MB-এর বড় ফাইল হলে content খালি আসে
+    const r2 = await gh('GET', null, true);
+    if (!r2.ok) throw httpError(r2);
+    text = await r2.text();
+  }
+  return { sha: j.sha, data: normalize(JSON.parse(text)) };
+}
+
+async function remotePut(sha) {
+  const body = {
+    message: `ডেটা আপডেট — ${new Date().toLocaleString('en-GB')}`,
+    content: b64encode(JSON.stringify(db, null, 1)),
+  };
+  if (sha) body.sha = sha;
+  const res = await gh('PUT', body);
+  if (!res.ok) throw httpError(res);
+  return (await res.json()).content.sha;
+}
+
+function scheduleSync() {
+  if (!syncOn()) return;
+  sync.dirty = true;
+  saveSync();
+  setSyncState('pending');
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(pushNow, 1500);
+}
+
+async function pushNow() {
+  if (!syncOn() || !sync.dirty) return;
+  if (syncBusy) { clearTimeout(syncTimer); syncTimer = setTimeout(pushNow, 1500); return; }
+  syncBusy = true;
+  setSyncState('syncing');
+  let err = null;
+  try {
+    sync.sha = await remotePut(sync.sha);
+    sync.dirty = false;
+    sync.lastSync = new Date().toISOString();
+    saveSync();
+    syncConflicts = 0;
+  } catch (e) { err = e; }
+  syncBusy = false;
+  if (err) return handleSyncError(err);
+  setSyncState(sync.dirty ? 'pending' : 'ok');
+}
+
+/** অনলাইন থেকে সর্বশেষ ডেটা আনা; দুই দিকেই পরিবর্তন থাকলে জিজ্ঞেস করা */
+async function pullNow() {
+  if (!syncOn() || syncBusy) return;
+  syncBusy = true;
+  setSyncState('syncing');
+  let next = null;
+  try {
+    const remote = await remoteGet();
+    if (!remote) {
+      // অনলাইনে এখনো কোনো ডেটা নেই — এই ডিভাইসেরটা পাঠানো হবে
+      sync.sha = undefined;
+      sync.dirty = true;
+      next = 'push';
+    } else if (remote.sha === sync.sha) {
+      next = sync.dirty ? 'push' : 'ok';
+    } else {
+      let keepLocal = false;
+      if (sync.dirty && hasData(db)) {
+        keepLocal = confirm('এই ডিভাইসে এমন কিছু পরিবর্তন আছে যা অনলাইনে সেভ হয়নি, আবার অনলাইনেও (অন্য ডিভাইস থেকে) নতুন ডেটা এসেছে।\n\n' +
+          'OK = এই ডিভাইসের ডেটা রাখুন\nCancel = অনলাইনের ডেটা নিন\n\n(যেটাই বাছুন, অন্যটা অনলাইনের ইতিহাসে থেকে যাবে)');
+      }
+      sync.sha = remote.sha;
+      if (keepLocal) {
+        sync.dirty = true;
+        next = 'push';
+      } else {
+        db = remote.data;
+        localStorage.setItem(STORE_KEY, JSON.stringify(db));
+        sync.dirty = false;
+        sync.lastSync = new Date().toISOString();
+        next = 'render';
+      }
+    }
+    saveSync();
+  } catch (e) { next = e; }
+  syncBusy = false;
+  if (next instanceof Error) return handleSyncError(next);
+  if (next === 'push') return pushNow();
+  if (next === 'render') render();
+  setSyncState('ok');
+}
+
+function handleSyncError(e) {
+  console.error('sync:', e);
+  if ((e.status === 409 || e.status === 422) && syncConflicts++ < 3) return pullNow(); // অন্য ডিভাইসে নতুন ভার্সন
+  if (e.status === 401) return setSyncState('error', 'টোকেন কাজ করছে না বা মেয়াদ শেষ। সেটিংসে নতুন টোকেন দিন।');
+  if (e.status === 403) return setSyncState('error', 'টোকেনে লেখার অনুমতি নেই (Contents: Read and write লাগবে), অথবা অনেক বেশি রিকোয়েস্ট হয়েছে।');
+  if (e.status === 404) return setSyncState('error', 'ডেটা রিপোজিটরি পাওয়া যায়নি।');
+  if (!e.status) return setSyncState('offline', 'ইন্টারনেট সংযোগ নেই। সংযোগ ফিরলে নিজে থেকেই সেভ হবে।');
+  setSyncState('error', e.message);
+}
+
+async function connectSync(repo, token) {
+  repo = repo.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '').replace(/\/+$/, '');
+  token = token.trim();
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return alert('রিপোজিটরির নাম এভাবে লিখুন: ইউজারনেম/রিপোজিটরি (যেমন ' + DEFAULT_DATA_REPO + ')');
+  if (!token) return alert('টোকেন দিন।');
+  toast('যাচাই করা হচ্ছে…');
+  let info;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${repo}`, {
+      cache: 'no-store',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+    });
+    if (r.status === 401) return alert('টোকেনটা সঠিক নয়। আবার কপি করে দিন।');
+    if (r.status === 404) return alert('রিপোজিটরি পাওয়া যায়নি। নামটা ঠিক আছে কিনা দেখুন, আর টোকেন বানানোর সময় এই রিপোজিটরি বাছাই করেছিলেন কিনা দেখুন।');
+    if (!r.ok) return alert('GitHub থেকে সমস্যা: ' + r.status);
+    info = await r.json();
+  } catch (e) {
+    return alert('ইন্টারনেট সংযোগ দেখুন।');
+  }
+  if (!info.private && !confirm('⚠️ এই রিপোজিটরিটা PUBLIC! এখানে ডেটা রাখলে যে কেউ স্টুডেন্টদের তথ্য দেখতে পাবে।\nরিপোজিটরিটা Private করে নেওয়াই উচিত। তবুও চালু করবেন?')) return;
+  sync = { repo, token, dirty: hasData(db) };
+  saveSync();
+  await pullNow();
+  render();
+  if (syncState === 'ok') toast('✅ অনলাইন ব্যাকআপ চালু হয়েছে');
+}
+
+// ইন্টারনেট ফিরে এলে / অ্যাপে ফিরে এলে / নিয়মিত বিরতিতে সিঙ্ক
+window.addEventListener('online', () => (sync.dirty ? pushNow() : pullNow()));
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && syncOn() && !sync.dirty) pullNow();
+});
+setInterval(() => { if (syncOn() && sync.dirty && !syncBusy) pushNow(); }, 60000);
+window.addEventListener('beforeunload', (e) => {
+  if (syncOn() && sync.dirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
 /* ---------- router ---------- */
 function render(focusId) {
   const route = (location.hash.slice(1) || 'dashboard').split('?')[0];
@@ -1123,6 +1474,7 @@ function render(focusId) {
   $('#academy-name').textContent = db.settings.academyName;
   document.title = db.settings.academyName + ' — ম্যানেজমেন্ট';
   document.querySelectorAll('.sidebar a').forEach((a) => a.classList.toggle('active', a.dataset.route === route));
+  updateSyncBadge();
   if (focusId) {
     const el = document.getElementById(focusId);
     if (el) { el.focus(); const n = el.value.length; el.setSelectionRange?.(n, n); }
@@ -1141,3 +1493,4 @@ window.addEventListener('storage', (e) => {
 });
 
 render();
+if (syncOn()) pullNow();
