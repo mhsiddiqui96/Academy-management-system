@@ -570,6 +570,9 @@ const state = {
   studentTeacher: '',
   feeMonth: thisMonth(),
   feeBatch: '',
+  dueSearch: '',
+  dueBatch: '',
+  dueTeacher: '',
   accMonth: thisMonth(),
   progressStudent: '',
   progressBatch: '',
@@ -650,7 +653,7 @@ views.dashboard = () => {
     </div>
     <h3>সবচেয়ে বেশি বকেয়া — রিমাইন্ডার পাঠান</h3>
     ${table(['স্টুডেন্ট', 'ব্যাচ/ধরন', 'বকেয়া মাস', ['মোট', 'num'], ['রিমাইন্ডার', 'actions']], dueRows, '🎉 কোনো বকেয়া নেই')}
-    ${dues.length > 8 ? '<p><a href="#fees">সব বকেয়া দেখুন →</a></p>' : ''}
+    ${dues.length > 8 ? '<p><a href="#dues">সব বকেয়া দেখুন →</a></p>' : ''}
     <h3>সাম্প্রতিক ${isOwnerRole() ? 'লেনদেন' : 'আয়'}</h3>
     ${table(['তারিখ', 'খাত', 'বিবরণ', ['টাকা', 'num']], recent)}
   `;
@@ -1187,6 +1190,39 @@ views['t-info'] = () => {
       <button class="btn primary" data-action="t-edit-info">✏️ আপডেট করুন</button>
     </div>
     <button class="btn" data-action="logout">লগআউট</button>`;
+};
+
+/* ---------- শুধু বকেয়াদের তালিকা (সব মাস মিলিয়ে) ---------- */
+views.dues = () => {
+  const q = state.dueSearch.toLowerCase();
+  const list = allDues().filter(({ student: s }) =>
+    matchClass(s, state.dueBatch) &&
+    (!state.dueTeacher || studentTeacherId(s) === state.dueTeacher) &&
+    (!q || [s.name, s.roll, s.phone, s.guardian].some((x) => String(x || '').toLowerCase().includes(q))));
+  const total = sum(list, 'total');
+  const rows = list.map(({ student: s, dues: d, total: t }) => `
+    <tr><td><b>${esc(s.name)}</b>${s.roll ? `<br><span class="muted">${esc(s.roll)}</span>` : ''}</td>
+    <td>${esc(classLabel(s))}<br><span class="muted">${esc(teacherName(studentTeacherId(s)))}</span></td>
+    <td>${d.map((x) => monthLabel(x.month) + (x.paid ? ` <span class="muted">(${tk(x.due)} বাকি)</span>` : '')).join('<br>')}</td>
+    <td class="num">${num(d.length)}</td>
+    <td class="num"><b>${tk(t)}</b></td>
+    <td>${esc(s.guardian || '')}${s.guardian ? '<br>' : ''}<span class="muted">${esc(s.phone || '')}</span></td>
+    <td class="actions"><button class="btn sm success" data-action="pay" data-id="${s.id}">ফি নিন</button> ${reminderButtons(s, d)}</td></tr>`);
+  return `
+    <h2>⏰ বকেয়া তালিকা</h2>
+    <div class="toolbar">
+      <input id="due-search" data-filter="dueSearch" placeholder="🔍 নাম/রোল/ফোন দিয়ে খুঁজুন" value="${esc(state.dueSearch)}">
+      <select data-filter="dueBatch">${opts(classFilterOpts(), state.dueBatch, 'সব ব্যাচ ও ওয়ান-টু-ওয়ান')}</select>
+      <select data-filter="dueTeacher">${opts(db.teachers.map((t) => [t.id, t.name]), state.dueTeacher, 'সব শিক্ষক')}</select>
+    </div>
+    <div class="cards">
+      ${card('মোট বকেয়া', tk(total), 'red')}
+      ${card('বকেয়া আছে এমন স্টুডেন্ট', num(list.length))}
+      ${card('বকেয়া মাস (মোট)', num(list.reduce((a, x) => a + x.dues.length, 0)))}
+    </div>
+    <p class="muted">ভর্তির মাস থেকে এ মাস পর্যন্ত যাদের ফি পুরো বা আংশিক বাকি, শুধু তারাই এখানে (সবচেয়ে বেশি বকেয়া আগে)। নিষ্ক্রিয় স্টুডেন্টরা নেই।</p>
+    ${table(['স্টুডেন্ট', 'ব্যাচ / শিক্ষক', 'বকেয়া মাস', ['মাস', 'num'], ['মোট বকেয়া', 'num'], 'যোগাযোগ', ['', 'actions']], rows, '🎉 কারো কোনো বকেয়া নেই')}
+  `;
 };
 
 views.fees = () => {
@@ -2691,7 +2727,7 @@ function navFor() {
     ['dashboard', '📊 ড্যাশবোর্ড'], ['students', '🎓 স্টুডেন্ট'], ['batches', '📚 ব্যাচ'], ['teachers', '👩‍🏫 শিক্ষক ও এসাইনমেন্ট'],
   ];
   if (isOwnerRole()) items.push(['payroll', '💵 শিক্ষকের হিসাব'], ['staff', '👥 স্টাফ ও সম্মানী']);
-  items.push(['routine', '📅 ক্লাস রুটিন'], ['fees', '💰 ফি ও রিমাইন্ডার'], ['accounts', isOwnerRole() ? '📒 আয়-ব্যয়' : '📒 আয়'], ['progress', '📈 পড়াশোনার প্রগ্রেস']);
+  items.push(['routine', '📅 ক্লাস রুটিন'], ['fees', '💰 ফি ও রিমাইন্ডার'], ['dues', '⏰ বকেয়া তালিকা'], ['accounts', isOwnerRole() ? '📒 আয়-ব্যয়' : '📒 আয়'], ['progress', '📈 পড়াশোনার প্রগ্রেস']);
   if (canSeeReports()) items.push(['reports', '🧾 রিপোর্ট']);
   if (isOwnerRole() && FB_MODE) items.push(['activity', '🕘 কার্যক্রম']);
   items.push(['settings', isOwnerRole() ? '⚙️ সেটিংস ও ব্যাকআপ' : '⚙️ সেটিংস']);
@@ -2728,6 +2764,11 @@ window.addEventListener('hashchange', () => {
 window.addEventListener('storage', (e) => {
   if (!FB_MODE && e.key === STORE_KEY) { db = loadLocal(); render(); }
 });
+
+// ইন্টারনেট ছাড়াও অ্যাপ খোলার জন্য (sw.js অ্যাপের ফাইলগুলো ফোনে রেখে দেয়)
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && !EMULATOR) {
+  navigator.serviceWorker.register('sw.js').catch((e) => console.warn('sw', e));
+}
 
 if (FB_MODE) initFirebase();
 else { reconcile(); render(); }
