@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>At-Turath Academy — ম্যানেজমেন্ট</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <button class="menu-btn" data-action="toggle-menu" aria-label="মেনু">☰</button>
+    <h1 id="academy-name">At-Turath Academy</h1>
+    <a id="sync-status" class="sync" href="#settings"></a>
+  </header>
+
+  <nav class="sidebar" id="sidebar">
+    <a href="#dashboard" data-route="dashboard">📊 ড্যাশবোর্ড</a>
+    <a href="#students" data-route="students">🎓 স্টুডেন্ট</a>
+    <a href="#batches" data-route="batches">📚 ব্যাচ</a>
+    <a href="#teachers" data-route="teachers">👩‍🏫 শিক্ষক ও এসাইনমেন্ট</a>
+    <a href="#routine" data-route="routine">📅 ক্লাস রুটিন</a>
+    <a href="#fees" data-route="fees">💰 ফি ও রিমাইন্ডার</a>
+    <a href="#accounts" data-route="accounts">📒 আয়-ব্যয়</a>
+    <a href="#progress" data-route="progress">📈 পড়াশোনার প্রগ্রেস</a>
+    <a href="#reports" data-route="reports">🧾 রিপোর্ট</a>
+    <a href="#settings" data-route="settings">⚙️ সেটিংস ও ব্যাকআপ</a>
+  </nav>
+
+  <main id="main"></main>
+
+  <dialog id="modal">
+    <form method="dialog" id="modal-form">
+      <h2 id="modal-title"></h2>
+      <div id="modal-body"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-action="close-modal">বাতিল</button>
+        <button type="submit" class="btn primary" id="modal-submit">সেভ করুন</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
