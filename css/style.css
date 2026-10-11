@@ -98,6 +98,7 @@ textarea { min-height: 80px; resize: vertical; }
 .badge.green { background: var(--green-soft); color: var(--green); }
 .badge.red { background: var(--red-soft); color: var(--red); }
 .badge.amber { background: var(--amber-soft); color: var(--amber); }
+.badge.blue { background: var(--primary-soft); color: var(--primary); }
 .badge.gray { background: var(--bg); color: var(--muted); }
 .up { color: var(--green); } .down { color: var(--red); }
 

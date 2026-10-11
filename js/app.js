@@ -8,17 +8,18 @@
 
 const STORE_KEY = 'academy-ms-v1';
 const BN_MONTHS = ['জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন', 'জুলাই', 'আগস্ট', 'সেপ্টেম্বর', 'অক্টোবর', 'নভেম্বর', 'ডিসেম্বর'];
-const PAY_METHODS = ['নগদ টাকা (ক্যাশ)', 'বিকাশ', 'নগদ', 'রকেট', 'ব্যাংক'];
-const INCOME_CATS = ['ভর্তি ফি', 'পরীক্ষা ফি', 'বই/শিট বিক্রি', 'অন্যান্য আয়'];
-const EXPENSE_CATS = ['শিক্ষক বেতন', 'স্টাফ বেতন', 'বাসা/রুম ভাড়া', 'বিদ্যুৎ বিল', 'ইন্টারনেট', 'প্রিন্ট/ফটোকপি', 'বিজ্ঞাপন', 'আপ্যায়ন', 'আসবাবপত্র', 'অন্যান্য ব্যয়'];
+const PAY_METHODS = ['বিকাশ', 'নগদ', 'রকেট', 'ব্যাংক ট্রান্সফার', 'কার্ড/অনলাইন গেটওয়ে', 'PayPal/Wise/Payoneer (বিদেশ)', 'ক্যাশ'];
+const INCOME_CATS = ['ভর্তি/রেজিস্ট্রেশন ফি', 'কোর্স ফি (এককালীন)', 'পরীক্ষা/সার্টিফিকেট ফি', 'বই/PDF/রেকর্ডেড কোর্স বিক্রি', 'অনুদান', 'অন্যান্য আয়'];
+const EXPENSE_CATS = ['শিক্ষক সম্মানী', 'স্টাফ/মডারেটর সম্মানী', 'Zoom/Google Meet সাবস্ক্রিপশন', 'ওয়েবসাইট/ডোমেইন/হোস্টিং', 'সফটওয়্যার/অ্যাপ', 'ফেসবুক/অনলাইন বিজ্ঞাপন', 'পেমেন্ট গেটওয়ে/ক্যাশআউট চার্জ', 'ইন্টারনেট', 'ডিজাইন/কনটেন্ট তৈরি', 'অন্যান্য ব্যয়'];
 
 const defaultData = () => ({
   version: 1,
   settings: {
-    academyName: 'আমার একাডেমি',
+    academyName: 'At-Turath Academy',
+    email: '',
     phone: '',
     address: '',
-    reminderTemplate: 'আসসালামু আলাইকুম, {guardian}। {academy} থেকে জানানো যাচ্ছে যে {student}-এর {months} মাসের বেতন মোট {amount} টাকা বকেয়া আছে। অনুগ্রহ করে দ্রুত পরিশোধ করুন। ধন্যবাদ।',
+    reminderTemplate: 'আসসালামু আলাইকুম, {guardian}। {academy} থেকে জানানো যাচ্ছে যে {student}-এর {months} মাসের ফি মোট {amount} টাকা বকেয়া আছে। অনুগ্রহ করে দ্রুত পরিশোধ করুন। ধন্যবাদ।',
   },
   teachers: [],
   batches: [],
@@ -116,10 +117,25 @@ function toast(msg) {
 /* ---------- domain logic ---------- */
 const teacherName = (id) => byId(db.teachers, id)?.name || '—';
 const batchName = (id) => byId(db.batches, id)?.name || '—';
+const isOne2One = (s) => s?.type === 'one2one';
+const ONE2ONE = '__one2one';
+/** স্টুডেন্ট কোথায় পড়ে: ব্যাচের নাম অথবা "ওয়ান-টু-ওয়ান" */
+const classLabel = (s) => (isOne2One(s) ? 'ওয়ান-টু-ওয়ান' : batchName(s?.batchId));
+const typeBadge = (s) => (isOne2One(s) ? '<span class="badge amber">ওয়ান-টু-ওয়ান</span>' : '<span class="badge blue">ব্যাচ</span>');
+/** ফিল্টার: '' = সব, ONE2ONE = সব ওয়ান-টু-ওয়ান, নাহলে নির্দিষ্ট ব্যাচ */
+function matchClass(s, f) {
+  if (!f) return true;
+  if (f === ONE2ONE) return isOne2One(s);
+  return !isOne2One(s) && s.batchId === f;
+}
+const classFilterOpts = () => [[ONE2ONE, 'সব ওয়ান-টু-ওয়ান'], ...db.batches.map((b) => [b.id, 'ব্যাচ: ' + b.name])];
+function classLink(s) {
+  return isOne2One(s) ? s.classLink : byId(db.batches, s.batchId)?.classLink;
+}
 const studentName = (id) => byId(db.students, id)?.name || '(মুছে ফেলা স্টুডেন্ট)';
 
 function studentTeacherId(s) {
-  if (s.teacherId) return s.teacherId;
+  if (s.teacherId || isOne2One(s)) return s.teacherId || '';
   return byId(db.batches, s.batchId)?.teacherId || '';
 }
 
@@ -127,7 +143,7 @@ function paidFor(studentId, month) {
   return sum(db.payments.filter((p) => p.studentId === studentId && p.month === month));
 }
 
-/** একজন স্টুডেন্টের ভর্তির মাস থেকে `upto` মাস পর্যন্ত যেসব মাসের বেতন বাকি */
+/** একজন স্টুডেন্টের ভর্তির মাস থেকে `upto` মাস পর্যন্ত যেসব মাসের ফি বাকি */
 function studentDues(s, upto = thisMonth()) {
   const fee = Number(s.monthlyFee) || 0;
   if (!fee || s.status === 'inactive') return [];
@@ -150,14 +166,14 @@ function allDues() {
     .sort((a, b) => b.total - a.total);
 }
 
-/** একটা মাসের সব আয় (বেতন + অন্যান্য আয়) ও ব্যয় একসাথে */
+/** একটা মাসের সব আয় (ফি + অন্যান্য আয়) ও ব্যয় একসাথে */
 function ledger(month) {
   const rows = [];
   for (const p of db.payments) {
     if (month && !p.date.startsWith(month)) continue;
     rows.push({
       id: p.id, kind: 'payment', type: 'income', date: p.date, amount: p.amount,
-      category: 'মাসিক বেতন', note: `${studentName(p.studentId)} — ${monthLabel(p.month)}${p.method ? ' (' + p.method + ')' : ''}`,
+      category: isOne2One(byId(db.students, p.studentId)) ? 'মাসিক ফি (ওয়ান-টু-ওয়ান)' : 'মাসিক ফি (ব্যাচ)', note: `${studentName(p.studentId)} — ${monthLabel(p.month)}${p.method ? ' (' + p.method + ')' : ''}`,
     });
   }
   for (const t of db.transactions) {
@@ -188,9 +204,12 @@ const pctOf = (e) => (Number(e.total) ? (Number(e.marks) / Number(e.total)) * 10
 
 /* ---------- reminders ---------- */
 function intlPhone(p) {
-  const d = String(p || '').replace(/\D/g, '');
+  const raw = String(p || '').trim();
+  const d = raw.replace(/\D/g, '');
+  if (raw.startsWith('+')) return d; // বিদেশি নম্বর: +44..., +966... ইত্যাদি
+  if (d.startsWith('00')) return d.slice(2);
   if (d.startsWith('880')) return d;
-  if (d.startsWith('0')) return '88' + d;
+  if (d.startsWith('01') && d.length === 11) return '88' + d; // বাংলাদেশি নম্বর
   if (d.length === 10 && d.startsWith('1')) return '880' + d;
   return d;
 }
@@ -198,7 +217,7 @@ function intlPhone(p) {
 function reminderText(s, dues) {
   const months = dues.map((d) => monthLabel(d.month)).join(', ');
   return db.settings.reminderTemplate
-    .replace(/\{guardian\}/g, s.guardian || 'অভিভাবক')
+    .replace(/\{guardian\}/g, s.guardian || s.name)
     .replace(/\{student\}/g, s.name)
     .replace(/\{months\}/g, months)
     .replace(/\{month\}/g, months)
@@ -207,12 +226,17 @@ function reminderText(s, dues) {
 }
 
 function reminderButtons(s, dues) {
-  if (!s.phone) return '<span class="muted">ফোন নেই</span>';
   const text = encodeURIComponent(reminderText(s, dues));
   const phone = intlPhone(s.phone);
-  return `<a class="btn sm wa" target="_blank" rel="noopener" href="https://wa.me/${phone}?text=${text}">WhatsApp</a>
-          <a class="btn sm" href="sms:+${phone}?body=${text}">SMS</a>
-          <button class="btn sm" data-action="copy-reminder" data-id="${s.id}">কপি</button>`;
+  const subject = encodeURIComponent(`${db.settings.academyName} — বকেয়া ফি-এর রিমাইন্ডার`);
+  let html = '';
+  if (phone) {
+    html += `<a class="btn sm wa" target="_blank" rel="noopener" href="https://wa.me/${phone}?text=${text}">WhatsApp</a>
+          <a class="btn sm" href="sms:+${phone}?body=${text}">SMS</a> `;
+  }
+  if (s.email) html += `<a class="btn sm" href="mailto:${esc(s.email)}?subject=${subject}&body=${text}">ইমেইল</a> `;
+  html += `<button class="btn sm" data-action="copy-reminder" data-id="${s.id}">কপি</button>`;
+  return html;
 }
 
 /* ---------- generic UI pieces ---------- */
@@ -249,8 +273,10 @@ function openForm({ title, fields, values = {}, submitLabel = 'সেভ কর�
       const extra = f.type === 'number' ? 'min="0" step="any"' : '';
       input = `<input type="${f.type || 'text'}" name="${f.name}" value="${esc(v)}" ${req} ${extra}>`;
     }
-    return `<div class="field"><label>${f.label}${f.required ? ' *' : ''}</label>${input}</div>`;
+    const cond = f.showIf ? `data-show-if="${f.showIf[0]}" data-show-values="${f.showIf[1].join(',')}"` : '';
+    return `<div class="field" ${cond}><label>${f.label}${f.required ? ' *' : ''}</label>${input}</div>`;
   }).join('');
+  updateConditionalFields();
   modalSubmit = (fd) => {
     const out = {};
     for (const f of fields) {
@@ -262,6 +288,18 @@ function openForm({ title, fields, values = {}, submitLabel = 'সেভ কর�
   $('#modal').showModal();
   $('#modal-body').querySelector('input,select,textarea')?.focus();
 }
+
+/** showIf: অন্য কোনো ফিল্ডের মান অনুযায়ী ফিল্ড দেখানো/লুকানো */
+function updateConditionalFields() {
+  const form = $('#modal-form');
+  form.querySelectorAll('[data-show-if]').forEach((el) => {
+    const ctrl = form.elements[el.dataset.showIf];
+    const show = !!ctrl && el.dataset.showValues.split(',').includes(ctrl.value);
+    el.hidden = !show;
+    el.querySelectorAll('input,select,textarea').forEach((i) => { i.disabled = !show; });
+  });
+}
+$('#modal-body').addEventListener('change', updateConditionalFields);
 
 $('#modal-form').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -295,10 +333,11 @@ views.dashboard = () => {
   const active = db.students.filter((s) => s.status !== 'inactive');
   const dues = allDues();
   const collectedThisMonth = sum(db.payments.filter((p) => p.month === m));
-  const expectedThisMonth = sum(active, 'monthlyFee');
+  const expectedThisMonth = sum(active.filter((s) => (s.admissionDate || '').slice(0, 7) <= m), 'monthlyFee');
+  const o2oCount = active.filter(isOne2One).length;
 
   const dueRows = dues.slice(0, 8).map(({ student: s, dues: d, total }) => `
-    <tr><td>${esc(s.name)}</td><td>${esc(batchName(s.batchId))}</td>
+    <tr><td>${esc(s.name)}</td><td>${esc(classLabel(s))}</td>
     <td>${d.map((x) => monthLabel(x.month)).join(', ')}</td>
     <td class="num"><b>${tk(total)}</b></td>
     <td class="actions">${reminderButtons(s, d)}</td></tr>`);
@@ -309,7 +348,7 @@ views.dashboard = () => {
 
   const firstRun = !db.students.length && !db.teachers.length ? `
     <div class="note">👋 স্বাগতম! শুরু করতে প্রথমে <b>সেটিংস</b>-এ একাডেমির নাম দিন, তারপর
-    <b>শিক্ষক → ব্যাচ → স্টুডেন্ট</b> এই ক্রমে যোগ করুন। শুধু দেখার জন্য চাইলে
+    <b>শিক্ষক → ব্যাচ → স্টুডেন্ট</b> এই ক্রমে যোগ করুন (ওয়ান-টু-ওয়ান স্টুডেন্টের জন্য ব্যাচ লাগে না)। শুধু দেখার জন্য চাইলে
     <button class="btn sm" data-action="load-demo">ডেমো ডেটা লোড করুন</button></div>` : '';
 
   return `
@@ -319,14 +358,15 @@ views.dashboard = () => {
       ${card('এ মাসের আয়', tk(t.income), 'green')}
       ${card('এ মাসের ব্যয়', tk(t.expense), 'red')}
       ${card('এ মাসের লাভ/ক্ষতি', tk(t.net), t.net >= 0 ? 'green' : 'red')}
-      ${card('এ মাসের বেতন আদায়', `${tk(collectedThisMonth)} <span class="muted" style="font-size:14px">/ ${tk(expectedThisMonth)}</span>`, 'blue')}
+      ${card('এ মাসের ফি আদায়', `${tk(collectedThisMonth)} <span class="muted" style="font-size:14px">/ ${tk(expectedThisMonth)}</span>`, 'blue')}
       ${card('মোট বকেয়া', tk(sum(dues, 'total')), 'red')}
       ${card('বকেয়া আছে এমন স্টুডেন্ট', num(dues.length))}
       ${card('সক্রিয় স্টুডেন্ট', num(active.length))}
+      ${card('ব্যাচে / ওয়ান-টু-ওয়ান', `${num(active.length - o2oCount)} / ${num(o2oCount)}`)}
       ${card('শিক্ষক / ব্যাচ', `${num(db.teachers.length)} / ${num(db.batches.length)}`)}
     </div>
     <h3>সবচেয়ে বেশি বকেয়া — রিমাইন্ডার পাঠান</h3>
-    ${table(['স্টুডেন্ট', 'ব্যাচ', 'বকেয়া মাস', ['মোট', 'num'], ['রিমাইন্ডার', 'actions']], dueRows, '🎉 কোনো বকেয়া নেই')}
+    ${table(['স্টুডেন্ট', 'ব্যাচ/ধরন', 'বকেয়া মাস', ['মোট', 'num'], ['রিমাইন্ডার', 'actions']], dueRows, '🎉 কোনো বকেয়া নেই')}
     ${dues.length > 8 ? '<p><a href="#fees">সব বকেয়া দেখুন →</a></p>' : ''}
     <h3>সাম্প্রতিক লেনদেন</h3>
     ${table(['তারিখ', 'খাত', 'বিবরণ', ['টাকা', 'num']], recent)}
@@ -336,22 +376,23 @@ views.dashboard = () => {
 views.students = () => {
   const q = state.studentSearch.toLowerCase();
   const list = db.students.filter((s) =>
-    (!q || [s.name, s.roll, s.phone, s.guardian].some((x) => String(x || '').toLowerCase().includes(q))) &&
-    (!state.studentBatch || s.batchId === state.studentBatch) &&
+    (!q || [s.name, s.roll, s.phone, s.guardian, s.email, s.course, s.country].some((x) => String(x || '').toLowerCase().includes(q))) &&
+    matchClass(s, state.studentBatch) &&
     (!state.studentTeacher || studentTeacherId(s) === state.studentTeacher));
 
   const rows = list.map((s) => {
     const due = sum(studentDues(s), 'due');
     return `<tr>
       <td><b>${esc(s.name)}</b>${s.roll ? `<br><span class="muted">রোল: ${esc(s.roll)}</span>` : ''}</td>
-      <td>${esc(batchName(s.batchId))}</td>
+      <td>${typeBadge(s)}<br>${esc(isOne2One(s) ? s.course || '' : classLabel(s))}</td>
       <td>${esc(teacherName(studentTeacherId(s)))}</td>
-      <td>${esc(s.guardian)}<br><span class="muted">${esc(s.phone)}</span></td>
+      <td>${esc(s.guardian || '')}${s.guardian ? '<br>' : ''}<span class="muted">${esc(s.phone)}${s.country ? ' · ' + esc(s.country) : ''}</span></td>
       <td class="num">${tk(s.monthlyFee)}</td>
       <td class="num">${due ? `<span class="badge red">${tk(due)}</span>` : '<span class="badge green">পরিশোধিত</span>'}</td>
       <td>${s.status === 'inactive' ? '<span class="badge gray">নিষ্ক্রিয়</span>' : '<span class="badge green">সক্রিয়</span>'}</td>
       <td class="actions">
-        <button class="btn sm success" data-action="pay" data-id="${s.id}">বেতন নিন</button>
+        ${classLink(s) ? `<a class="btn sm" target="_blank" rel="noopener" href="${esc(classLink(s))}">ক্লাস লিংক</a>` : ''}
+        <button class="btn sm success" data-action="pay" data-id="${s.id}">ফি নিন</button>
         <button class="btn sm" data-action="view-progress" data-id="${s.id}">প্রগ্রেস</button>
         <button class="btn sm" data-action="edit-student" data-id="${s.id}">এডিট</button>
         <button class="btn sm danger" data-action="del-student" data-id="${s.id}">মুছুন</button>
@@ -362,22 +403,23 @@ views.students = () => {
     <h2>স্টুডেন্ট (${num(list.length)} জন)</h2>
     <div class="toolbar">
       <input id="student-search" data-filter="studentSearch" placeholder="🔍 নাম/রোল/ফোন দিয়ে খুঁজুন" value="${esc(state.studentSearch)}">
-      <select data-filter="studentBatch">${opts(db.batches.map((b) => [b.id, b.name]), state.studentBatch, 'সব ব্যাচ')}</select>
+      <select data-filter="studentBatch">${opts(classFilterOpts(), state.studentBatch, 'সব ব্যাচ ও ওয়ান-টু-ওয়ান')}</select>
       <select data-filter="studentTeacher">${opts(db.teachers.map((t) => [t.id, t.name]), state.studentTeacher, 'সব শিক্ষক')}</select>
       <span class="spacer"></span>
       <button class="btn primary" data-action="add-student">+ নতুন স্টুডেন্ট</button>
     </div>
-    ${table(['নাম', 'ব্যাচ', 'দায়িত্বপ্রাপ্ত শিক্ষক', 'অভিভাবক / ফোন', ['মাসিক বেতন', 'num'], ['বকেয়া', 'num'], 'অবস্থা', ['', 'actions']], rows,
+    ${table(['নাম', 'ধরন / ব্যাচ', 'দায়িত্বপ্রাপ্ত শিক্ষক', 'যোগাযোগ', ['মাসিক ফি', 'num'], ['বকেয়া', 'num'], 'অবস্থা', ['', 'actions']], rows,
       db.students.length ? 'কোনো মিল পাওয়া যায়নি' : 'এখনো কোনো স্টুডেন্ট যোগ করা হয়নি')}
   `;
 };
 
 views.batches = () => {
   const rows = db.batches.map((b) => {
-    const count = db.students.filter((s) => s.batchId === b.id && s.status !== 'inactive').length;
+    const count = db.students.filter((s) => !isOne2One(s) && s.batchId === b.id && s.status !== 'inactive').length;
     return `<tr><td><b>${esc(b.name)}</b></td><td>${esc(b.subject)}</td><td>${esc(teacherName(b.teacherId))}</td>
       <td>${esc(b.schedule)}</td><td class="num">${tk(b.fee)}</td><td class="num">${num(count)}</td>
       <td class="actions">
+        ${b.classLink ? `<a class="btn sm" target="_blank" rel="noopener" href="${esc(b.classLink)}">ক্লাস লিংক</a>` : ''}
         <button class="btn sm" data-action="edit-batch" data-id="${b.id}">এডিট</button>
         <button class="btn sm danger" data-action="del-batch" data-id="${b.id}">মুছুন</button>
       </td></tr>`;
@@ -390,14 +432,20 @@ views.batches = () => {
 };
 
 views.teachers = () => {
+  const m = thisMonth();
+  const activeOf = (t) => db.students.filter((s) => s.status !== 'inactive' && studentTeacherId(s) === t.id);
   const rows = db.teachers.map((t) => {
     const batches = db.batches.filter((b) => b.teacherId === t.id);
-    const students = db.students.filter((s) => s.status !== 'inactive' && studentTeacherId(s) === t.id);
+    const students = activeOf(t);
+    const o2o = students.filter(isOne2One);
+    const collected = sum(db.payments.filter((p) => p.month === m && students.some((s) => s.id === p.studentId)));
     return `<tr><td><b>${esc(t.name)}</b><br><span class="muted">${esc(t.phone)}</span></td><td>${esc(t.subject)}</td>
-      <td>${batches.map((b) => esc(b.name)).join(', ') || '—'}</td><td class="num">${num(students.length)}</td>
-      <td class="num">${tk(t.salary)}</td>
+      <td>${batches.map((b) => esc(b.name)).join(', ') || '—'}</td>
+      <td class="num">${num(o2o.length)}</td><td class="num">${num(students.length)}</td>
+      <td class="num">${tk(collected)}</td>
+      <td class="num">${t.salary ? tk(t.salary) : '—'}</td>
       <td class="actions">
-        <button class="btn sm success" data-action="pay-teacher" data-id="${t.id}">বেতন দিন</button>
+        <button class="btn sm success" data-action="pay-teacher" data-id="${t.id}">সম্মানী দিন</button>
         <button class="btn sm" data-action="edit-teacher" data-id="${t.id}">এডিট</button>
         <button class="btn sm danger" data-action="del-teacher" data-id="${t.id}">মুছুন</button>
       </td></tr>`;
@@ -406,23 +454,27 @@ views.teachers = () => {
   const unassigned = db.students.filter((s) => s.status !== 'inactive' && !studentTeacherId(s));
   const cards = db.teachers.map((t) => {
     const batches = db.batches.filter((b) => b.teacherId === t.id);
-    const direct = db.students.filter((s) => s.status !== 'inactive' && s.teacherId === t.id);
     const batchHtml = batches.map((b) => {
-      const st = db.students.filter((s) => s.batchId === b.id && s.status !== 'inactive' && (!s.teacherId || s.teacherId === t.id));
-      return `<li><b>${esc(b.name)}</b> <span class="muted">(${num(st.length)} জন)</span></li>`;
+      const st = db.students.filter((s) => !isOne2One(s) && s.batchId === b.id && s.status !== 'inactive' && (!s.teacherId || s.teacherId === t.id));
+      return `<li><b>${esc(b.name)}</b> <span class="muted">(${num(st.length)} জন${b.schedule ? ' · ' + esc(b.schedule) : ''})</span></li>`;
     }).join('');
-    const directHtml = direct.filter((s) => !batches.some((b) => b.id === s.batchId))
-      .map((s) => `<li>${esc(s.name)} <span class="muted">(সরাসরি)</span></li>`).join('');
+    const o2o = activeOf(t).filter(isOne2One).map((s) =>
+      `<li>${esc(s.name)} <span class="muted">(${esc(s.course || 'ওয়ান-টু-ওয়ান')}${s.schedule ? ' · ' + esc(s.schedule) : ''})</span></li>`).join('');
+    const other = activeOf(t).filter((s) => !isOne2One(s) && !batches.some((b) => b.id === s.batchId))
+      .map((s) => `<li>${esc(s.name)} <span class="muted">(${esc(classLabel(s))} থেকে আলাদাভাবে)</span></li>`).join('');
     return `<div class="panel"><h3>👩‍🏫 ${esc(t.name)}</h3>
-      <ul>${batchHtml + directHtml || '<li class="muted">কিছু এসাইন করা নেই</li>'}</ul></div>`;
+      <div class="muted">ব্যাচ</div><ul>${batchHtml || '<li class="muted">নেই</li>'}</ul>
+      <div class="muted" style="margin-top:8px">ওয়ান-টু-ওয়ান</div><ul>${o2o || '<li class="muted">নেই</li>'}</ul>
+      ${other ? `<div class="muted" style="margin-top:8px">অন্য ব্যাচ থেকে এসাইন করা</div><ul>${other}</ul>` : ''}</div>`;
   }).join('');
 
   return `
     <h2>শিক্ষক ও এসাইনমেন্ট</h2>
     <div class="toolbar"><span class="spacer"></span><button class="btn primary" data-action="add-teacher">+ নতুন শিক্ষক</button></div>
-    ${table(['নাম', 'বিষয়', 'ব্যাচ', ['স্টুডেন্ট', 'num'], ['মাসিক বেতন', 'num'], ['', 'actions']], rows, 'এখনো কোনো শিক্ষক যোগ করা হয়নি')}
+    ${table(['নাম', 'বিষয়', 'ব্যাচ', ['ওয়ান-টু-ওয়ান', 'num'], ['মোট স্টুডেন্ট', 'num'], [`${BN_MONTHS[Number(m.slice(5)) - 1]}-এ ফি আদায়`, 'num'], ['নির্দিষ্ট সম্মানী', 'num'], ['', 'actions']], rows, 'এখনো কোনো শিক্ষক যোগ করা হয়নি')}
+    <p class="muted">"ফি আদায়" কলামে দেখায় ওই শিক্ষকের স্টুডেন্টদের কাছ থেকে এ মাসে কত ফি এসেছে। শিক্ষককে শতাংশ হারে সম্মানী দিলে এটা দেখে হিসাব করতে পারবেন।</p>
     <h3>কোন ব্যাচ/স্টুডেন্ট কার কাছে</h3>
-    <p class="muted">ব্যাচে শিক্ষক এসাইন করলে সেই ব্যাচের সব স্টুডেন্ট তাঁর কাছে যায়। কোনো স্টুডেন্টকে আলাদা শিক্ষকের কাছে দিতে চাইলে স্টুডেন্ট এডিট করে "আলাদা শিক্ষক" বাছাই করুন।</p>
+    <p class="muted">ব্যাচে শিক্ষক এসাইন করলে সেই ব্যাচের সব স্টুডেন্ট তাঁর কাছে যায়। ওয়ান-টু-ওয়ান স্টুডেন্টের শিক্ষক স্টুডেন্ট যোগ করার সময়ই বাছাই করা হয়।</p>
     <div class="assign-grid">${cards}</div>
     ${unassigned.length ? `<div class="note">⚠️ ${num(unassigned.length)} জন স্টুডেন্ট কোনো শিক্ষকের কাছে এসাইন করা নেই: ${unassigned.map((s) => esc(s.name)).join(', ')}</div>` : ''}
   `;
@@ -431,7 +483,7 @@ views.teachers = () => {
 views.fees = () => {
   const m = state.feeMonth;
   const list = db.students.filter((s) => s.status !== 'inactive' && Number(s.monthlyFee) > 0 &&
-    (s.admissionDate || '').slice(0, 7) <= m && (!state.feeBatch || s.batchId === state.feeBatch));
+    (s.admissionDate || '').slice(0, 7) <= m && matchClass(s, state.feeBatch));
   let expected = 0, collected = 0;
   const rows = list.map((s) => {
     const fee = Number(s.monthlyFee);
@@ -440,11 +492,11 @@ views.fees = () => {
     expected += fee; collected += Math.min(paid, fee);
     const status = due === 0 ? '<span class="badge green">পরিশোধিত</span>' : paid > 0 ? '<span class="badge amber">আংশিক</span>' : '<span class="badge red">বাকি</span>';
     const allDue = studentDues(s);
-    return `<tr><td><b>${esc(s.name)}</b><br><span class="muted">${esc(batchName(s.batchId))}</span></td>
+    return `<tr><td><b>${esc(s.name)}</b><br><span class="muted">${esc(classLabel(s))}</span></td>
       <td class="num">${tk(fee)}</td><td class="num">${tk(paid)}</td><td class="num">${tk(due)}</td><td>${status}</td>
       <td class="num">${allDue.length ? tk(sum(allDue, 'due')) + `<br><span class="muted">${num(allDue.length)} মাস</span>` : '—'}</td>
       <td class="actions">
-        ${due > 0 ? `<button class="btn sm success" data-action="pay" data-id="${s.id}" data-month="${m}">বেতন নিন</button>` : ''}
+        ${due > 0 ? `<button class="btn sm success" data-action="pay" data-id="${s.id}" data-month="${m}">ফি নিন</button>` : ''}
         ${allDue.length ? reminderButtons(s, allDue) : ''}
       </td></tr>`;
   });
@@ -455,12 +507,12 @@ views.fees = () => {
     <button class="btn sm danger" data-action="del-payment" data-id="${p.id}">মুছুন</button></td></tr>`);
 
   return `
-    <h2>বেতন ও রিমাইন্ডার</h2>
+    <h2>ফি ও রিমাইন্ডার</h2>
     <div class="toolbar">
       <label>মাস: <input type="month" data-filter="feeMonth" value="${m}"></label>
-      <select data-filter="feeBatch">${opts(db.batches.map((b) => [b.id, b.name]), state.feeBatch, 'সব ব্যাচ')}</select>
+      <select data-filter="feeBatch">${opts(classFilterOpts(), state.feeBatch, 'সব ব্যাচ ও ওয়ান-টু-ওয়ান')}</select>
       <span class="spacer"></span>
-      <button class="btn primary" data-action="pay">+ বেতন জমা নিন</button>
+      <button class="btn primary" data-action="pay">+ ফি জমা নিন</button>
     </div>
     <div class="cards">
       ${card(`${monthLabel(m)} — মোট পাওনা`, tk(expected), 'blue')}
@@ -468,9 +520,9 @@ views.fees = () => {
       ${card('বাকি', tk(expected - collected), 'red')}
     </div>
     <p class="muted">WhatsApp/SMS বাটনে চাপ দিলে অভিভাবকের নম্বরে বকেয়ার বিস্তারিতসহ মেসেজ তৈরি হয়ে যাবে — শুধু "Send" চাপবেন। মেসেজের ভাষা সেটিংস থেকে বদলাতে পারবেন।</p>
-    ${table(['স্টুডেন্ট', ['মাসিক বেতন', 'num'], ['জমা', 'num'], ['এ মাসে বাকি', 'num'], 'অবস্থা', ['সব মিলিয়ে বকেয়া', 'num'], ['', 'actions']], rows, 'এই মাসে কোনো সক্রিয় স্টুডেন্ট নেই')}
-    <h3>${monthLabel(m)} মাসের বেতন জমার তালিকা</h3>
-    ${table(['জমার তারিখ', 'স্টুডেন্ট', 'মাধ্যম', ['টাকা', 'num'], ['', 'actions']], payRows, 'এই মাসের কোনো বেতন জমা হয়নি')}
+    ${table(['স্টুডেন্ট', ['মাসিক ফি', 'num'], ['জমা', 'num'], ['এ মাসে বাকি', 'num'], 'অবস্থা', ['সব মিলিয়ে বকেয়া', 'num'], ['', 'actions']], rows, 'এই মাসে কোনো সক্রিয় স্টুডেন্ট নেই')}
+    <h3>${monthLabel(m)} মাসের ফি জমার তালিকা</h3>
+    ${table(['জমার তারিখ', 'স্টুডেন্ট', 'মাধ্যম', ['টাকা', 'num'], ['', 'actions']], payRows, 'এই মাসের কোনো ফি জমা হয়নি')}
   `;
 };
 
@@ -499,14 +551,14 @@ views.accounts = () => {
       ${card('মোট ব্যয়', tk(t.expense), 'red')}
       ${card('লাভ/ক্ষতি', tk(t.net), t.net >= 0 ? 'green' : 'red')}
     </div>
-    <p class="muted">স্টুডেন্টদের বেতন জমা নিলে সেটা স্বয়ংক্রিয়ভাবে আয় হিসেবে এখানে চলে আসে। শিক্ষকের বেতন "শিক্ষক" পেজ থেকে দিলে ব্যয় হিসেবে যোগ হয়।</p>
+    <p class="muted">স্টুডেন্টদের ফি জমা নিলে সেটা নিজে থেকেই আয় হিসেবে এখানে চলে আসে। শিক্ষকের সম্মানী "শিক্ষক" পেজ থেকে দিলে ব্যয় হিসেবে যোগ হয়। বিদেশ থেকে আসা পেমেন্ট টাকায় রূপান্তর করে (যত টাকা হাতে এসেছে) লিখুন।</p>
     ${table(['তারিখ', 'ধরন', 'খাত', 'বিবরণ', ['টাকা', 'num'], ['', 'actions']], trs, 'এই মাসে কোনো লেনদেন নেই')}
   `;
 };
 
 views.progress = () => {
   const sel = state.progressStudent;
-  const studentOpts = db.students.filter((s) => !state.progressBatch || s.batchId === state.progressBatch)
+  const studentOpts = db.students.filter((s) => matchClass(s, state.progressBatch))
     .map((s) => [s.id, `${s.name}${s.roll ? ' (' + s.roll + ')' : ''}`]);
 
   let detail = '';
@@ -536,7 +588,7 @@ views.progress = () => {
       return `<tr><td>${esc(sub)}</td><td class="num">${num(ps.length)}</td><td class="num">${num(Math.round(a))}%</td><td><span class="badge ${gc}">${g}</span></td></tr>`;
     });
     detail = `
-      <div class="panel"><h3>${esc(s.name)} — ${esc(batchName(s.batchId))} · শিক্ষক: ${esc(teacherName(studentTeacherId(s)))}</h3>
+      <div class="panel"><h3>${esc(s.name)} — ${esc(classLabel(s))} · শিক্ষক: ${esc(teacherName(studentTeacherId(s)))}</h3>
       <div class="cards" style="margin-bottom:0">
         ${card('মোট পরীক্ষা', num(exams.length))}
         ${card('গড় নম্বর', exams.length ? num(Math.round(avg)) + '%' : '—', 'blue')}
@@ -547,14 +599,14 @@ views.progress = () => {
       ${table(['তারিখ', 'পরীক্ষা', 'বিষয়', ['নম্বর', 'num'], 'শতকরা', 'গ্রেড', 'মন্তব্য', ['', 'actions']], rows, 'এখনো কোনো ফলাফল যোগ করা হয়নি')}`;
   } else {
     // ব্যাচভিত্তিক সারসংক্ষেপ
-    const list = db.students.filter((s) => s.status !== 'inactive' && (!state.progressBatch || s.batchId === state.progressBatch));
+    const list = db.students.filter((s) => s.status !== 'inactive' && matchClass(s, state.progressBatch));
     const rows = list.map((s) => {
       const ex = db.exams.filter((e) => e.studentId === s.id).sort((a, b) => (a.date > b.date ? 1 : -1));
-      if (!ex.length) return { s, avg: -1, html: `<tr><td>${esc(s.name)}</td><td>${esc(batchName(s.batchId))}</td><td class="num">০</td><td colspan="2" class="muted">কোনো ফলাফল নেই</td><td class="actions"><button class="btn sm" data-action="view-progress" data-id="${s.id}">দেখুন</button></td></tr>` };
+      if (!ex.length) return { s, avg: -1, html: `<tr><td>${esc(s.name)}</td><td>${esc(classLabel(s))}</td><td class="num">০</td><td colspan="2" class="muted">কোনো ফলাফল নেই</td><td class="actions"><button class="btn sm" data-action="view-progress" data-id="${s.id}">দেখুন</button></td></tr>` };
       const avg = ex.reduce((a, e) => a + pctOf(e), 0) / ex.length;
       const last = pctOf(ex[ex.length - 1]);
       const [g, gc] = grade(avg);
-      return { s, avg, html: `<tr><td>${esc(s.name)}</td><td>${esc(batchName(s.batchId))}</td><td class="num">${num(ex.length)}</td>
+      return { s, avg, html: `<tr><td>${esc(s.name)}</td><td>${esc(classLabel(s))}</td><td class="num">${num(ex.length)}</td>
         <td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="flex:1"><span style="width:${Math.min(100, avg)}%"></span></div>${num(Math.round(avg))}% <span class="badge ${gc}">${g}</span></div></td>
         <td class="num">${num(Math.round(last))}%</td>
         <td class="actions"><button class="btn sm" data-action="view-progress" data-id="${s.id}">দেখুন</button></td></tr>` };
@@ -566,7 +618,7 @@ views.progress = () => {
   return `
     <h2>পড়াশোনার প্রগ্রেস</h2>
     <div class="toolbar">
-      <select data-filter="progressBatch">${opts(db.batches.map((b) => [b.id, b.name]), state.progressBatch, 'সব ব্যাচ')}</select>
+      <select data-filter="progressBatch">${opts(classFilterOpts(), state.progressBatch, 'সব ব্যাচ ও ওয়ান-টু-ওয়ান')}</select>
       <select data-filter="progressStudent">${opts(studentOpts, sel, 'সব স্টুডেন্ট (র‍্যাংকিং)')}</select>
       <span class="spacer"></span>
       <button class="btn primary" data-action="add-exam">+ পরীক্ষার ফলাফল যোগ</button>
@@ -605,6 +657,23 @@ views.reports = () => {
     return `<tr><td>${esc(t.name)}</td><td class="num">${num(st.length)}</td><td class="num">${tk(expected)}</td><td class="num">${tk(collected)}</td></tr>`;
   });
 
+  // ব্যাচভিত্তিক ও ওয়ান-টু-ওয়ান আদায়
+  const classRow = (label, st) => {
+    const ids = new Set(st.map((s) => s.id));
+    const collected = sum(db.payments.filter((p) => ids.has(p.studentId) && p.month === rm));
+    const expected = sum(st.filter((s) => (s.admissionDate || '').slice(0, 7) <= rm), 'monthlyFee');
+    return { collected, expected, html: `<tr><td>${label}</td><td class="num">${num(st.length)}</td><td class="num">${tk(expected)}</td><td class="num">${tk(collected)}</td><td class="num">${tk(Math.max(0, expected - collected))}</td></tr>` };
+  };
+  const activeSt = db.students.filter((s) => s.status !== 'inactive');
+  const classRows = db.batches.map((b) => classRow(`ব্যাচ: ${esc(b.name)}`, activeSt.filter((s) => !isOne2One(s) && s.batchId === b.id)));
+  const noBatch = activeSt.filter((s) => !isOne2One(s) && !byId(db.batches, s.batchId));
+  if (noBatch.length) classRows.push(classRow('ব্যাচ ছাড়া', noBatch));
+  const o2oRow = classRow('<b>ওয়ান-টু-ওয়ান (সব)</b>', activeSt.filter(isOne2One));
+  const batchTotal = classRows.reduce((a, r) => ({ c: a.c + r.collected, e: a.e + r.expected }), { c: 0, e: 0 });
+  const classHtml = [...classRows.map((r) => r.html),
+    `<tr><td><b>ব্যাচ (সব)</b></td><td></td><td class="num"><b>${tk(batchTotal.e)}</b></td><td class="num"><b>${tk(batchTotal.c)}</b></td><td class="num"><b>${tk(Math.max(0, batchTotal.e - batchTotal.c))}</b></td></tr>`,
+    o2oRow.html];
+
   return `
     <h2>রিপোর্ট</h2>
     <div class="toolbar">
@@ -615,7 +684,9 @@ views.reports = () => {
     </div>
     <h3>${monthLabel(rm)} — খাতভিত্তিক আয়-ব্যয়</h3>
     ${table(['ধরন', 'খাত', ['টাকা', 'num']], catRows, 'এই মাসে কোনো লেনদেন নেই')}
-    <h3>${monthLabel(rm)} — শিক্ষকভিত্তিক বেতন আদায়</h3>
+    <h3>${monthLabel(rm)} — ব্যাচ বনাম ওয়ান-টু-ওয়ান</h3>
+    ${table(['ব্যাচ/ধরন', ['স্টুডেন্ট', 'num'], ['পাওনা', 'num'], ['আদায়', 'num'], ['বাকি', 'num']], classHtml)}
+    <h3>${monthLabel(rm)} — শিক্ষকভিত্তিক ফি আদায়</h3>
     ${table(['শিক্ষক', ['স্টুডেন্ট', 'num'], ['পাওনা', 'num'], ['আদায়', 'num']], teacherRows, 'কোনো শিক্ষক নেই')}
     <h3>গত ১২ মাসের আয়-ব্যয়</h3>
     ${table(['মাস', ['আয়', 'num'], ['ব্যয়', 'num'], ['লাভ/ক্ষতি', 'num']], yearRows)}
@@ -632,7 +703,7 @@ views.settings = () => {
       <div class="field"><label>একাডেমির নাম</label><input id="set-name" value="${esc(s.academyName)}"></div>
       <div class="field"><label>ফোন</label><input id="set-phone" value="${esc(s.phone)}"></div>
       <div class="field"><label>ঠিকানা</label><input id="set-address" value="${esc(s.address)}"></div>
-      <div class="field"><label>বেতন রিমাইন্ডার মেসেজ — {guardian}, {student}, {months}, {amount}, {academy} লিখলে আসল তথ্য বসে যাবে</label>
+      <div class="field"><label>ফি রিমাইন্ডার মেসেজ — {guardian}, {student}, {months}, {amount}, {academy} লিখলে আসল তথ্য বসে যাবে</label>
         <textarea id="set-template">${esc(s.reminderTemplate)}</textarea></div>
       <button class="btn primary" data-action="save-settings">সেভ করুন</button>
     </div>
@@ -664,22 +735,37 @@ const batchOpts = () => db.batches.map((b) => [b.id, `${b.name}${b.fee ? ' — '
 function studentForm(s) {
   openForm({
     title: s ? 'স্টুডেন্ট এডিট' : 'নতুন স্টুডেন্ট',
-    values: s || { admissionDate: today(), status: 'active' },
+    values: s ? { type: 'batch', ...s, one2oneTeacherId: s.teacherId } : { type: 'batch', admissionDate: today(), status: 'active' },
     fields: [
       { name: 'name', label: 'নাম', required: true },
-      { name: 'roll', label: 'রোল/আইডি' },
-      { name: 'batchId', label: 'ব্যাচ', type: 'select', options: batchOpts(), placeholder: '— ব্যাচ বাছাই করুন —' },
-      { name: 'teacherId', label: 'আলাদা শিক্ষক (খালি রাখলে ব্যাচের শিক্ষক)', type: 'select', options: teacherOpts(), placeholder: '— ব্যাচের শিক্ষক —' },
-      { name: 'monthlyFee', label: 'মাসিক বেতন (খালি রাখলে ব্যাচের ফি)', type: 'number' },
-      { name: 'guardian', label: 'অভিভাবকের নাম' },
-      { name: 'phone', label: 'অভিভাবকের মোবাইল (WhatsApp)', type: 'tel' },
-      { name: 'school', label: 'স্কুল/কলেজ' },
-      { name: 'admissionDate', label: 'ভর্তির তারিখ (এই মাস থেকে বেতন হিসাব হবে)', type: 'date', required: true },
+      { name: 'roll', label: 'স্টুডেন্ট আইডি' },
+      { name: 'type', label: 'পড়ার ধরন', type: 'select', options: [['batch', 'ব্যাচে পড়ে'], ['one2one', 'ওয়ান-টু-ওয়ান (একা শিক্ষকের সাথে)']] },
+      { name: 'batchId', label: 'ব্যাচ', type: 'select', options: batchOpts(), placeholder: '— ব্যাচ বাছাই করুন —', showIf: ['type', ['batch']] },
+      { name: 'teacherId', label: 'আলাদা শিক্ষক (খালি রাখলে ব্যাচের শিক্ষক)', type: 'select', options: teacherOpts(), placeholder: '— ব্যাচের শিক্ষক —', showIf: ['type', ['batch']] },
+      { name: 'one2oneTeacherId', label: 'শিক্ষক', type: 'select', options: teacherOpts(), placeholder: '— শিক্ষক বাছাই করুন —', showIf: ['type', ['one2one']] },
+      { name: 'course', label: 'কোর্স/বিষয় (যেমন: আরবি ভাষা, তাজবীদ)', showIf: ['type', ['one2one']] },
+      { name: 'schedule', label: 'ক্লাসের সময়সূচি (বাংলাদেশ সময়, যেমন: সোম/বুধ রাত ৯টা)', showIf: ['type', ['one2one']] },
+      { name: 'classLink', label: 'ক্লাস লিংক (Zoom/Meet)', type: 'url', showIf: ['type', ['one2one']] },
+      { name: 'monthlyFee', label: 'মাসিক ফি (ব্যাচে খালি রাখলে ব্যাচের ফি বসবে)', type: 'number' },
+      { name: 'guardian', label: 'অভিভাবকের নাম (প্রাপ্তবয়স্ক হলে খালি রাখুন)' },
+      { name: 'phone', label: 'WhatsApp নম্বর (বিদেশি নম্বর হলে +দেশের কোডসহ, যেমন +447...)', type: 'tel' },
+      { name: 'email', label: 'ইমেইল', type: 'email' },
+      { name: 'country', label: 'দেশ/শহর' },
+      { name: 'admissionDate', label: 'ভর্তির তারিখ (এই মাস থেকে ফি হিসাব হবে)', type: 'date', required: true },
       { name: 'status', label: 'অবস্থা', type: 'select', options: [['active', 'সক্রিয়'], ['inactive', 'নিষ্ক্রিয় (ছেড়ে দিয়েছে)']] },
       { name: 'note', label: 'নোট', type: 'textarea' },
     ],
     onSubmit: (v) => {
-      if (!v.monthlyFee && v.batchId) v.monthlyFee = Number(byId(db.batches, v.batchId)?.fee) || 0;
+      if (v.type === 'one2one') {
+        if (!v.one2oneTeacherId) { alert('ওয়ান-টু-ওয়ান স্টুডেন্টের জন্য শিক্ষক বাছাই করুন'); return false; }
+        if (!v.monthlyFee) { alert('ওয়ান-টু-ওয়ান স্টুডেন্টের মাসিক ফি লিখুন'); return false; }
+        v.teacherId = v.one2oneTeacherId;
+        v.batchId = '';
+      } else {
+        v.course = ''; v.schedule = ''; v.classLink = '';
+        if (!v.monthlyFee && v.batchId) v.monthlyFee = Number(byId(db.batches, v.batchId)?.fee) || 0;
+      }
+      delete v.one2oneTeacherId;
       if (s) Object.assign(s, v);
       else db.students.push({ id: uid(), ...v });
       toast('স্টুডেন্ট সেভ হয়েছে');
@@ -692,11 +778,12 @@ function batchForm(b) {
     title: b ? 'ব্যাচ এডিট' : 'নতুন ব্যাচ',
     values: b || {},
     fields: [
-      { name: 'name', label: 'ব্যাচের নাম (যেমন: HSC-২৭ ফিজিক্স, সকাল)', required: true },
+      { name: 'name', label: 'ব্যাচের নাম (যেমন: আরবি ভাষা — বেসিক, ব্যাচ-৩)', required: true },
       { name: 'subject', label: 'বিষয়' },
       { name: 'teacherId', label: 'দায়িত্বপ্রাপ্ত শিক্ষক', type: 'select', options: teacherOpts(), placeholder: '— শিক্ষক বাছাই করুন —' },
-      { name: 'schedule', label: 'সময়সূচি (যেমন: শনি/সোম/বুধ, বিকাল ৪টা)' },
-      { name: 'fee', label: 'মাসিক ফি', type: 'number' },
+      { name: 'schedule', label: 'সময়সূচি (বাংলাদেশ সময়, যেমন: শনি/সোম/বুধ রাত ৯টা)' },
+      { name: 'classLink', label: 'ক্লাস লিংক (Zoom/Google Meet)', type: 'url' },
+      { name: 'fee', label: 'মাসিক ফি (প্রতি স্টুডেন্ট)', type: 'number' },
     ],
     onSubmit: (v) => {
       if (b) Object.assign(b, v);
@@ -714,7 +801,7 @@ function teacherForm(t) {
       { name: 'name', label: 'নাম', required: true },
       { name: 'phone', label: 'মোবাইল', type: 'tel' },
       { name: 'subject', label: 'বিষয়' },
-      { name: 'salary', label: 'মাসিক বেতন/সম্মানী', type: 'number' },
+      { name: 'salary', label: 'মাসিক সম্মানী (নির্দিষ্ট হলে)', type: 'number' },
       { name: 'joinDate', label: 'যোগদানের তারিখ', type: 'date' },
       { name: 'note', label: 'নোট', type: 'textarea' },
     ],
@@ -734,16 +821,16 @@ function paymentForm(studentId, month) {
   if (s && !m) m = studentDues(s)[0]?.month || thisMonth();
   const amount = s ? Math.max(0, Number(s.monthlyFee) - paidFor(s.id, m || thisMonth())) : '';
   openForm({
-    title: 'বেতন জমা',
+    title: 'ফি জমা',
     submitLabel: 'জমা নিন',
     values: { studentId, month: m || thisMonth(), amount, date: today(), method: PAY_METHODS[0] },
     fields: [
-      { name: 'studentId', label: 'স্টুডেন্ট', type: 'select', required: true, options: active.map((x) => [x.id, `${x.name} — ${batchName(x.batchId)}`]), placeholder: '— বাছাই করুন —' },
-      { name: 'month', label: 'কোন মাসের বেতন', type: 'month', required: true },
+      { name: 'studentId', label: 'স্টুডেন্ট', type: 'select', required: true, options: active.map((x) => [x.id, `${x.name} — ${classLabel(x)}`]), placeholder: '— বাছাই করুন —' },
+      { name: 'month', label: 'কোন মাসের ফি', type: 'month', required: true },
       { name: 'amount', label: 'টাকার পরিমাণ', type: 'number', required: true },
       { name: 'date', label: 'জমার তারিখ', type: 'date', required: true },
       { name: 'method', label: 'মাধ্যম', type: 'select', options: PAY_METHODS.map((x) => [x, x]) },
-      { name: 'note', label: 'নোট (যেমন: বিকাশ TrxID)' },
+      { name: 'note', label: 'নোট (যেমন: TrxID/রেফারেন্স)' },
     ],
     onSubmit: (v) => {
       if (!(v.amount > 0)) { alert('সঠিক টাকার পরিমাণ লিখুন'); return false; }
@@ -779,7 +866,7 @@ function examForm(e, studentId) {
     title: e ? 'ফলাফল এডিট' : 'পরীক্ষার ফলাফল যোগ',
     values: e || { studentId: studentId || '', date: today(), total: 100 },
     fields: [
-      { name: 'studentId', label: 'স্টুডেন্ট', type: 'select', required: true, options: db.students.map((s) => [s.id, `${s.name} — ${batchName(s.batchId)}`]), placeholder: '— বাছাই করুন —' },
+      { name: 'studentId', label: 'স্টুডেন্ট', type: 'select', required: true, options: db.students.map((s) => [s.id, `${s.name} — ${classLabel(s)}`]), placeholder: '— বাছাই করুন —' },
       { name: 'title', label: 'পরীক্ষার নাম (যেমন: সাপ্তাহিক টেস্ট-৩)', required: true },
       { name: 'subject', label: 'বিষয়' },
       { name: 'marks', label: 'প্রাপ্ত নম্বর', type: 'number', required: true },
@@ -825,9 +912,9 @@ function printReceipt(p) {
     <style>body{font-family:"Hind Siliguri",sans-serif;max-width:420px;margin:24px auto;padding:20px;border:1px dashed #999}
     h2{margin:0;text-align:center}p.c{text-align:center;margin:4px 0;color:#555}table{width:100%;margin-top:16px;border-collapse:collapse}
     td{padding:6px 0;border-bottom:1px solid #eee}td:last-child{text-align:right}.sig{margin-top:48px;text-align:right}</style></head><body>
-    <h2>${esc(set.academyName)}</h2><p class="c">${esc(set.address)} ${esc(set.phone)}</p><p class="c"><b>বেতন রসিদ</b></p>
+    <h2>${esc(set.academyName)}</h2><p class="c">${esc(set.address)} ${esc(set.phone)}</p><p class="c"><b>ফি জমার রসিদ</b></p>
     <table><tr><td>রসিদ নং</td><td>${esc(p.id.toUpperCase())}</td></tr>
-    <tr><td>স্টুডেন্ট</td><td>${esc(s.name || '')}</td></tr><tr><td>ব্যাচ</td><td>${esc(batchName(s.batchId))}</td></tr>
+    <tr><td>স্টুডেন্ট</td><td>${esc(s.name || '')}</td></tr><tr><td>ব্যাচ</td><td>${esc(classLabel(s))}</td></tr>
     <tr><td>মাস</td><td>${monthLabel(p.month)}</td></tr><tr><td>জমার তারিখ</td><td>${fmtDate(p.date)}</td></tr>
     <tr><td>মাধ্যম</td><td>${esc(p.method)}</td></tr><tr><td><b>টাকা</b></td><td><b>${tk(p.amount)}</b></td></tr></table>
     <div class="sig">_____________<br>গ্রহণকারী</div><script>window.print()<\/script></body></html>`);
@@ -836,38 +923,57 @@ function printReceipt(p) {
 
 function demoData() {
   const d = defaultData();
-  d.settings.academyName = 'আলো একাডেমি (ডেমো)';
-  const T = (name, subject, salary) => ({ id: uid(), name, subject, salary, phone: '01700000000', joinDate: '2026-01-01' });
-  const t1 = T('রাশেদ স্যার', 'পদার্থবিজ্ঞান', 15000), t2 = T('নাসরিন ম্যাডাম', 'গণিত', 14000), t3 = T('তানভীর স্যার', 'ইংরেজি', 12000);
+  d.settings.academyName = 'At-Turath Academy (ডেমো)';
+  const T = (name, subject, salary, phone) => ({ id: uid(), name, subject, salary, phone, joinDate: '2026-01-01' });
+  const t1 = T('উস্তায আব্দুল্লাহ', 'আরবি ভাষা', 15000, '01700000001');
+  const t2 = T('উস্তাযা মারইয়াম', 'তাজবীদ ও তিলাওয়াত', 0, '01700000002');
+  const t3 = T('উস্তায হাসান', 'আরবি ব্যাকরণ', 0, '01700000003');
   d.teachers = [t1, t2, t3];
-  const B = (name, subject, teacherId, schedule, fee) => ({ id: uid(), name, subject, teacherId, schedule, fee });
-  const b1 = B('HSC-২৭ ফিজিক্স', 'পদার্থবিজ্ঞান', t1.id, 'শনি/সোম/বুধ — বিকাল ৪টা', 1500);
-  const b2 = B('SSC-২৭ গণিত', 'গণিত', t2.id, 'রবি/মঙ্গল/বৃহঃ — সকাল ৮টা', 1200);
-  const b3 = B('ক্লাস ৮ ইংরেজি', 'ইংরেজি', t3.id, 'শুক্র — সকাল ১০টা', 800);
-  d.batches = [b1, b2, b3];
-  const names = ['আরিফ হাসান', 'সুমাইয়া আক্তার', 'রাফি আহমেদ', 'নুসরাত জাহান', 'তাহমিদ ইসলাম', 'মাহিয়া রহমান', 'সাকিব হোসেন', 'ফারিয়া ইসলাম', 'ইমরান খান'];
+  const B = (name, subject, teacherId, schedule, fee) => ({ id: uid(), name, subject, teacherId, schedule, fee, classLink: 'https://meet.google.com/' });
+  const b1 = B('আরবি ভাষা — বেসিক (ব্যাচ-৩)', 'আরবি ভাষা', t1.id, 'শনি/সোম/বুধ — রাত ৯টা', 1500);
+  const b2 = B('তাজবীদ — বোনদের ব্যাচ', 'তাজবীদ', t2.id, 'রবি/মঙ্গল — বিকাল ৪টা', 1200);
+  d.batches = [b1, b2];
   const m = thisMonth();
-  names.forEach((name, i) => {
-    const b = [b1, b2, b3][i % 3];
-    const s = { id: uid(), name, roll: String(101 + i), batchId: b.id, teacherId: '', monthlyFee: b.fee, guardian: 'অভিভাবক', phone: '0171' + String(1000000 + i * 1111), admissionDate: shiftMonth(m, -3) + '-01', status: 'active' };
-    d.students.push(s);
+  const start = shiftMonth(m, -3) + '-01';
+  let rollNo = 101;
+  const mk = (name, extra) => ({ id: uid(), name, roll: 'AT-' + rollNo++, guardian: '', phone: '', email: '', country: 'বাংলাদেশ', admissionDate: start, status: 'active', ...extra });
+  const batchSt = [
+    ['আরিফ হাসান', b1, '01711000001'], ['সুমাইয়া আক্তার', b2, '01711000002'], ['রাফি আহমেদ', b1, '+447700900123', 'যুক্তরাজ্য'],
+    ['নুসরাত জাহান', b2, '01711000004'], ['তাহমিদ ইসলাম', b1, '+966500000005', 'সৌদি আরব'], ['মাহিয়া রহমান', b2, '01711000006'],
+  ].map(([name, b, phone, country]) => mk(name, { type: 'batch', batchId: b.id, teacherId: '', monthlyFee: b.fee, phone, country: country || 'বাংলাদেশ' }));
+  const o2oSt = [
+    mk('আব্দুর রহমান', { type: 'one2one', teacherId: t2.id, course: 'কুরআন তিলাওয়াত (নাজেরা)', schedule: 'প্রতিদিন সকাল ৭টা', monthlyFee: 3000, guardian: 'জনাব করিম', phone: '01711000007', classLink: 'https://zoom.us/' }),
+    mk('ফাতিমা খাতুন', { type: 'one2one', teacherId: t3.id, course: 'আরবি ব্যাকরণ (নাহু)', schedule: 'সোম/বৃহঃ রাত ১০টা', monthlyFee: 4000, phone: '+12025550108', country: 'যুক্তরাষ্ট্র', email: 'demo@example.com' }),
+    mk('ইমরান খান', { type: 'one2one', teacherId: t1.id, course: 'আরবি কথোপকথন', schedule: 'শুক্র/শনি সন্ধ্যা ৭টা', monthlyFee: 3500, phone: '01711000009' }),
+  ];
+  d.students = [...batchSt, ...o2oSt];
+  d.students.forEach((s, i) => {
     for (let k = 3; k >= 0; k--) {
       const mm = shiftMonth(m, -k);
       if (k === 0 && i % 3 === 0) continue;
       if (k <= 1 && i % 4 === 1) continue;
-      d.payments.push({ id: uid(), studentId: s.id, month: mm, amount: b.fee, date: mm + '-0' + (5 + (i % 4)), method: PAY_METHODS[i % 3] });
+      d.payments.push({ id: uid(), studentId: s.id, month: mm, amount: s.monthlyFee, date: mm + '-0' + (2 + (i % 4)), method: s.country === 'বাংলাদেশ' ? PAY_METHODS[i % 3] : PAY_METHODS[5] });
     }
-    [['সাপ্তাহিক টেস্ট-১', -2], ['সাপ্তাহিক টেস্ট-২', -1], ['মাসিক পরীক্ষা', 0]].forEach(([title, off], j) => {
-      d.exams.push({ id: uid(), studentId: s.id, title, subject: b.subject, total: 50, marks: Math.min(50, 22 + ((i * 7 + j * 5) % 27)), date: shiftMonth(m, off) + '-1' + j, remark: '' });
+    const subject = s.type === 'one2one' ? s.course : byId(d.batches, s.batchId).subject;
+    [['সাপ্তাহিক মূল্যায়ন-১', -2], ['সাপ্তাহিক মূল্যায়ন-২', -1], ['মাসিক পরীক্ষা', 0]].forEach(([title, off], j) => {
+      d.exams.push({ id: uid(), studentId: s.id, title, subject, total: 50, marks: Math.min(50, 22 + ((i * 7 + j * 5) % 27)), date: shiftMonth(m, off) + '-0' + (1 + j), remark: '' });
     });
   });
+  // শতাংশ হারে সম্মানী: ওয়ান-টু-ওয়ান শিক্ষকদের ফি-এর ৬০%
+  const shareOf = (t, mm) => Math.round(0.6 * sum(d.payments.filter((p) => p.month === mm && o2oSt.some((s) => s.id === p.studentId && s.teacherId === t.id))));
   for (let k = 3; k >= 0; k--) {
     const mm = shiftMonth(m, -k);
-    d.transactions.push({ id: uid(), type: 'expense', category: 'বাসা/রুম ভাড়া', amount: 12000, date: mm + '-02', note: 'রুম ভাড়া' });
-    d.transactions.push({ id: uid(), type: 'expense', category: 'বিদ্যুৎ বিল', amount: 1800, date: mm + '-10', note: '' });
-    if (k > 0) d.teachers.forEach((t) => d.transactions.push({ id: uid(), type: 'expense', category: 'শিক্ষক বেতন', amount: t.salary, date: mm + '-28', note: t.name }));
+    d.transactions.push({ id: uid(), type: 'expense', category: 'Zoom/Google Meet সাবস্ক্রিপশন', amount: 1600, date: mm + '-01', note: 'Zoom Pro' });
+    d.transactions.push({ id: uid(), type: 'expense', category: 'ফেসবুক/অনলাইন বিজ্ঞাপন', amount: 3000, date: mm + '-05', note: 'ভর্তির বিজ্ঞাপন' });
+    if (k > 0) {
+      d.transactions.push({ id: uid(), type: 'expense', category: 'শিক্ষক সম্মানী', amount: t1.salary, date: mm + '-28', note: t1.name + ' (নির্দিষ্ট)' });
+      for (const t of [t2, t3]) {
+        const amt = shareOf(t, mm);
+        if (amt) d.transactions.push({ id: uid(), type: 'expense', category: 'শিক্ষক সম্মানী', amount: amt, date: mm + '-28', note: t.name + ' (ওয়ান-টু-ওয়ান ফি-এর ৬০%)' });
+      }
+    }
   }
-  d.transactions.push({ id: uid(), type: 'income', category: 'ভর্তি ফি', amount: 4500, date: shiftMonth(m, -3) + '-01', note: '৯ জন ভর্তি' });
+  d.transactions.push({ id: uid(), type: 'income', category: 'ভর্তি/রেজিস্ট্রেশন ফি', amount: 4500, date: start, note: '৯ জন ভর্তি' });
   return d;
 }
 
@@ -879,7 +985,7 @@ const actions = {
   'edit-student': ({ id }) => studentForm(byId(db.students, id)),
   'del-student': ({ id }) => {
     const s = byId(db.students, id);
-    if (!confirm(`"${s.name}"-কে মুছে ফেলবেন? (ছেড়ে দিলে মুছে না ফেলে "নিষ্ক্রিয়" করাই ভালো — তাতে হিসাব ঠিক থাকে)\nতাঁর পরীক্ষার ফলাফলও মুছে যাবে; বেতনের হিসাব আয়-ব্যয়ে থেকে যাবে।`)) return;
+    if (!confirm(`"${s.name}"-কে মুছে ফেলবেন? (ছেড়ে দিলে মুছে না ফেলে "নিষ্ক্রিয়" করাই ভালো — তাতে হিসাব ঠিক থাকে)\nতাঁর পরীক্ষার ফলাফলও মুছে যাবে; ফি-এর হিসাব আয়-ব্যয়ে থেকে যাবে।`)) return;
     db.students = db.students.filter((x) => x.id !== id);
     db.exams = db.exams.filter((x) => x.studentId !== id);
     commit('মুছে ফেলা হয়েছে');
@@ -905,13 +1011,13 @@ const actions = {
     const t = byId(db.teachers, id);
     txnForm('expense', null);
     const f = $('#modal-form');
-    f.category.value = 'শিক্ষক বেতন';
+    f.category.value = 'শিক্ষক সম্মানী';
     f.amount.value = t.salary || '';
     f.note.value = `${t.name} — ${monthLabel(thisMonth())}`;
   },
   pay: ({ id, month }) => paymentForm(id, month),
   'del-payment': ({ id }) => {
-    if (!confirm('এই বেতন জমার এন্ট্রি মুছে ফেলবেন?')) return;
+    if (!confirm('এই ফি জমার এন্ট্রি মুছে ফেলবেন?')) return;
     db.payments = db.payments.filter((x) => x.id !== id);
     commit('মুছে ফেলা হয়েছে');
   },
