@@ -1040,12 +1040,13 @@ function printReceipt(p) {
     <style>body{font-family:"Hind Siliguri",sans-serif;max-width:420px;margin:24px auto;padding:20px;border:1px dashed #999}
     h2{margin:0;text-align:center}p.c{text-align:center;margin:4px 0;color:#555}table{width:100%;margin-top:16px;border-collapse:collapse}
     td{padding:6px 0;border-bottom:1px solid #eee}td:last-child{text-align:right}.sig{margin-top:48px;text-align:right}</style></head><body>
+    <img src="${new URL('icons/logo.png', location.href).href}" alt="" style="display:block;width:150px;margin:0 auto 8px">
     <h2>${esc(set.academyName)}</h2><p class="c">${esc(set.address)} ${esc(set.phone)}</p><p class="c"><b>ফি জমার রসিদ</b></p>
     <table><tr><td>রসিদ নং</td><td>${esc(p.id.toUpperCase())}</td></tr>
     <tr><td>স্টুডেন্ট</td><td>${esc(s.name || '')}</td></tr><tr><td>ব্যাচ</td><td>${esc(classLabel(s))}</td></tr>
     <tr><td>মাস</td><td>${monthLabel(p.month)}</td></tr><tr><td>জমার তারিখ</td><td>${fmtDate(p.date)}</td></tr>
     <tr><td>মাধ্যম</td><td>${esc(p.method)}</td></tr><tr><td><b>টাকা</b></td><td><b>${tk(p.amount)}</b></td></tr></table>
-    <div class="sig">_____________<br>গ্রহণকারী</div><script>window.print()<\/script></body></html>`);
+    <div class="sig">_____________<br>গ্রহণকারী</div><script>window.onload = () => window.print()<\/script></body></html>`);
   w.document.close();
 }
 

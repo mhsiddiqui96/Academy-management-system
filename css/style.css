@@ -4,8 +4,9 @@
   --text: #1f2430;
   --muted: #6b7280;
   --border: #e3e6ee;
-  --primary: #2f5bea;
-  --primary-soft: #e8eefe;
+  --primary: #128c87;
+  --accent: #36cc9e;
+  --primary-soft: #e2f3f1;
   --green: #12805c;
   --green-soft: #e3f5ee;
   --red: #c8372d;
@@ -32,6 +33,7 @@ body {
   padding: 0 16px; background: var(--primary); color: #fff; z-index: 20;
 }
 .topbar h1 { font-size: 20px; margin: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-logo { width: 34px; height: 34px; padding: 4px; object-fit: contain; background: #fff; border-radius: 50%; flex-shrink: 0; }
 .menu-btn { display: none; background: none; border: 0; color: #fff; font-size: 24px; cursor: pointer; }
 
 .sidebar {
