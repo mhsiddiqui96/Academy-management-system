@@ -265,8 +265,14 @@ function fmtRule(r) {
   return r.type === 'fixed' ? `মাসে ${tk(r.value)}` : `ফি-এর ${num(r.value)}%`;
 }
 
+/** মালিক নিজে যে "শিক্ষক" — তাঁর ক্লাসের পুরো ফি একাডেমির আয়, শিক্ষকের পাওনা হয় না */
+const isSelfTeacher = (tid) => !!byId(db.teachers, tid)?.selfOwner;
+const payTeachers = () => db.teachers.filter((t) => !t.selfOwner);
+const ruleText = (tid, r) => (isSelfTeacher(tid) ? '<span class="badge blue">মালিক নিজে — সম্মানী নেই</span>' : fmtRule(r));
+
 function teacherShareFor(s, amount) {
   if (!s) return 0;
+  if (isSelfTeacher(studentTeacherId(s))) return 0;
   const r = payRule(s);
   if (r.type === 'fixed') {
     const fee = Number(s.monthlyFee) || 0;
@@ -694,7 +700,7 @@ views.batches = () => {
   const rows = db.batches.map((b) => {
     const count = db.students.filter((s) => !isOne2One(s) && s.batchId === b.id && s.status !== 'inactive').length;
     return `<tr><td><b>${esc(b.name)}</b></td><td>${esc(b.subject)}</td><td>${esc(teacherName(b.teacherId))}</td>
-      <td>${esc(fmtSchedule(b))}</td><td class="num">${tk(b.fee)}</td>${isOwnerRole() ? `<td>${fmtRule(payRule({ batchId: b.id }))}</td>` : ''}<td class="num">${num(count)}</td>
+      <td>${esc(fmtSchedule(b))}</td><td class="num">${tk(b.fee)}</td>${isOwnerRole() ? `<td>${ruleText(b.teacherId, payRule({ batchId: b.id }))}</td>` : ''}<td class="num">${num(count)}</td>
       <td class="actions">
         ${b.classLink ? `<a class="btn sm" target="_blank" rel="noopener" href="${esc(b.classLink)}">ক্লাস লিংক</a>` : ''}
         ${isOwnerRole() ? `<button class="btn sm" data-action="edit-batch" data-id="${b.id}">এডিট</button>
@@ -723,11 +729,11 @@ views.teachers = () => {
       <td class="num">${num(o2o.length)}</td><td class="num">${num(students.length)}</td>
       <td class="num">${num(monthClasses)}</td>
       ${isOwnerRole() ? `<td class="num">${tk(acc.earned)}</td>
-      <td class="num">${tk(acc.share)}</td>
-      <td class="num">${due > 0 ? `<span class="badge red">${tk(due)}</span>` : tk(due)}</td>
+      ${t.selfOwner ? '<td class="num" colspan="2"><span class="badge blue">মালিক নিজে — সম্মানী নেই</span></td>' : `<td class="num">${tk(acc.share)}</td>
+      <td class="num">${due > 0 ? `<span class="badge red">${tk(due)}</span>` : tk(due)}</td>`}
       <td class="actions">
-        <button class="btn sm success" data-action="payout" data-id="${t.id}">পরিশোধ</button>
-        <button class="btn sm" data-action="payroll-detail" data-id="${t.id}">হিসাব</button>
+        ${t.selfOwner ? '' : `<button class="btn sm success" data-action="payout" data-id="${t.id}">পরিশোধ</button>
+        <button class="btn sm" data-action="payroll-detail" data-id="${t.id}">হিসাব</button>`}
         <button class="btn sm" data-action="edit-teacher" data-id="${t.id}">এডিট</button>
         <button class="btn sm danger" data-action="del-teacher" data-id="${t.id}">মুছুন</button>
       </td>` : ''}</tr>`;
@@ -738,10 +744,10 @@ views.teachers = () => {
     const batches = db.batches.filter((b) => b.teacherId === t.id);
     const batchHtml = batches.map((b) => {
       const st = db.students.filter((s) => !isOne2One(s) && s.batchId === b.id && s.status !== 'inactive' && (!s.teacherId || s.teacherId === t.id));
-      return `<li><b>${esc(b.name)}</b> <span class="muted">(${num(st.length)} জন${fmtSchedule(b) ? ' · ' + esc(fmtSchedule(b)) : ''})</span>${isOwnerRole() ? ' · ' + fmtRule(payRule({ batchId: b.id })) : ''}</li>`;
+      return `<li><b>${esc(b.name)}</b> <span class="muted">(${num(st.length)} জন${fmtSchedule(b) ? ' · ' + esc(fmtSchedule(b)) : ''})</span>${isOwnerRole() ? ' · ' + ruleText(t.id, payRule({ batchId: b.id })) : ''}</li>`;
     }).join('');
     const o2o = activeOf(t).filter(isOne2One).map((s) =>
-      `<li>${esc(s.name)} <span class="muted">(${esc(s.course || 'ওয়ান-টু-ওয়ান')}${fmtSchedule(s) ? ' · ' + esc(fmtSchedule(s)) : ''})</span>${isOwnerRole() ? ' · ' + fmtRule(payRule(s)) : ''}</li>`).join('');
+      `<li>${esc(s.name)} <span class="muted">(${esc(s.course || 'ওয়ান-টু-ওয়ান')}${fmtSchedule(s) ? ' · ' + esc(fmtSchedule(s)) : ''})</span>${isOwnerRole() ? ' · ' + ruleText(t.id, payRule(s)) : ''}</li>`).join('');
     const other = activeOf(t).filter((s) => !isOne2One(s) && !batches.some((b) => b.id === s.batchId))
       .map((s) => `<li>${esc(s.name)} <span class="muted">(${esc(classLabel(s))} থেকে আলাদাভাবে)</span></li>`).join('');
     return `<div class="panel"><h3>👩‍🏫 ${esc(t.name)}</h3>
@@ -791,7 +797,8 @@ views.routine = () => {
 views.payroll = () => {
   const m = state.payMonth;
   const now = thisMonth();
-  const rows = db.teachers.map((t) => {
+  const selfIncome = db.teachers.filter((t) => t.selfOwner).reduce((a, t) => a + teacherAccount(t.id, { month: m }).earned, 0);
+  const rows = payTeachers().map((t) => {
     const a = teacherAccount(t.id, { month: m });
     const due = teacherAccount(t.id, { upto: m }).balance;
     return `<tr><td><b>${esc(t.name)}</b><br><span class="muted">${esc(t.subject || '')}</span></td>
@@ -803,14 +810,14 @@ views.payroll = () => {
         <button class="btn sm" data-action="payroll-detail" data-id="${t.id}">বিস্তারিত</button>
       </td></tr>`;
   });
-  const tot = db.teachers.reduce((acc, t) => {
+  const tot = payTeachers().reduce((acc, t) => {
     const a = teacherAccount(t.id, { month: m });
     acc.e += a.earned; acc.s += a.share; acc.p += a.paid; acc.d += teacherAccount(t.id, { upto: m }).balance;
     return acc;
   }, { e: 0, s: 0, p: 0, d: 0 });
 
   let detail = '';
-  const t = byId(db.teachers, state.payTeacher);
+  const t = byId(payTeachers(), state.payTeacher);
   if (t) {
     const a = teacherAccount(t.id, { month: m });
     const dueTotal = teacherAccount(t.id, { upto: m }).balance;
@@ -820,7 +827,7 @@ views.payroll = () => {
       const st = byId(db.students, p.studentId);
       const key = !st ? 'deleted' : isOne2One(st) ? 's' + st.id : 'b' + (st.batchId || '-');
       const label = !st ? '(মুছে ফেলা স্টুডেন্ট)' : isOne2One(st) ? `ওয়ান-টু-ওয়ান: ${st.name}` : `ব্যাচ: ${batchName(st.batchId)}`;
-      const g = (groups[key] ||= { label, rule: st ? fmtRule(payRule(st)) : '—', n: new Set(), earned: 0, share: 0 });
+      const g = (groups[key] ||= { label, rule: st ? ruleText(studentTeacherId(st), payRule(st)) : '—', n: new Set(), earned: 0, share: 0 });
       g.n.add(p.studentId); g.earned += Number(p.amount); g.share += paymentShare(p);
     }
     const srcRows = Object.values(groups).sort((x, y) => y.share - x.share).map((g) => `
@@ -867,7 +874,7 @@ views.payroll = () => {
     <h2>শিক্ষকের হিসাব ও পরিশোধ</h2>
     <div class="toolbar">
       <label>মাস: <input type="month" data-filter="payMonth" value="${m}"></label>
-      <select data-filter="payTeacher">${opts(db.teachers.map((x) => [x.id, x.name]), state.payTeacher, '— শিক্ষক বাছাই করে বিস্তারিত দেখুন —')}</select>
+      <select data-filter="payTeacher">${opts(payTeachers().map((x) => [x.id, x.name]), state.payTeacher, '— শিক্ষক বাছাই করে বিস্তারিত দেখুন —')}</select>
       <span class="spacer"></span>
       <button class="btn" data-action="recalc-shares">🔄 এ মাসের পাওনা নতুন নিয়মে হিসাব করুন</button>
     </div>
@@ -879,6 +886,7 @@ views.payroll = () => {
       ${card('একাডেমির অংশ', tk(tot.e - tot.s))}
       ${card('এ মাসে পরিশোধ', tk(tot.p))}
       ${card('শিক্ষকদের মোট বাকি', tk(tot.d), tot.d > 0 ? 'red' : '')}
+      ${db.teachers.some((x) => x.selfOwner) ? card('আপনার নিজের ক্লাস থেকে আয়', tk(selfIncome), 'blue') : ''}
     </div>
     ${table(['শিক্ষক', ['উপার্জন', 'num'], ['পাওনা', 'num'], ['একাডেমির অংশ', 'num'], ['পরিশোধ', 'num'], ['মোট বাকি', 'num'], ['', 'actions']], rows, 'এখনো কোনো শিক্ষক যোগ করা হয়নি')}
     ${detail}
@@ -1238,8 +1246,8 @@ views.accounts = () => {
     <td class="num ${r.type === 'income' ? 'up' : 'down'}">${tk(r.amount)}</td>
     <td class="actions">${r.kind === 'income' || r.kind === 'expense'
       ? `<button class="btn sm" data-action="edit-txn" data-kind="${r.kind}" data-id="${r.id}">এডিট</button>${isOwnerRole() ? ` <button class="btn sm danger" data-action="del-txn" data-kind="${r.kind}" data-id="${r.id}">মুছুন</button>` : ''}`
-      : r.kind === 'payout' ? `<button class="btn sm" data-action="payout-slip" data-id="${r.id}">স্লিপ</button>`
-      : r.kind === 'staffPayout' ? `<button class="btn sm" data-action="staff-slip" data-id="${r.id}">স্লিপ</button>`
+      : r.kind === 'payout' ? `<button class="btn sm" data-action="payout-slip" data-id="${r.id}">স্লিপ</button>${isOwnerRole() ? ` <button class="btn sm danger" data-action="del-payout" data-id="${r.id}">মুছুন</button>` : ''}`
+      : r.kind === 'staffPayout' ? `<button class="btn sm" data-action="staff-slip" data-id="${r.id}">স্লিপ</button>${isOwnerRole() ? ` <button class="btn sm danger" data-action="del-staff-payout" data-id="${r.id}">মুছুন</button>` : ''}`
       : `<button class="btn sm" data-action="receipt" data-id="${r.id}">রসিদ</button>`}</td></tr>`);
 
   return `
@@ -1674,9 +1682,10 @@ function teacherForm(t) {
   const priv = t ? byId(db.teacherPrivate, t.id) || {} : {};
   openForm({
     title: t ? 'শিক্ষক এডিট' : 'নতুন শিক্ষক',
-    values: t ? { ...t, ...priv } : { joinDate: today() },
+    values: t ? { ...t, ...priv, kind: t.selfOwner ? 'owner' : 'teacher' } : { joinDate: today(), kind: 'teacher' },
     fields: [
       { name: 'name', label: 'নাম', required: true },
+      { name: 'kind', label: 'ধরন', type: 'select', options: [['teacher', 'শিক্ষক — সম্মানী পান'], ['owner', 'আমি নিজে (মালিক) — সম্মানী নেই, পুরো ফি একাডেমির']] },
       { name: 'phone', label: 'মোবাইল/WhatsApp (বিদেশি হলে +দেশের কোডসহ)', type: 'tel' },
       { name: 'subject', label: 'বিষয়' },
       { name: 'joinDate', label: 'যোগদানের তারিখ', type: 'date' },
@@ -1684,9 +1693,13 @@ function teacherForm(t) {
       ...PAYINFO_FIELDS,
     ],
     onSubmit: (v) => {
-      const { bkash, nagad, rocket, bank, ...tv } = v;
-      const saved = put('teachers', { ...(t || {}), ...tv, id: t?.id }, tv.name);
+      const { bkash, nagad, rocket, bank, kind, ...tv } = v;
+      tv.selfOwner = kind === 'owner';
+      const changed = !!t && !!t.selfOwner !== tv.selfOwner;
+      const saved = put('teachers', { ...(t || {}), ...tv, id: t?.id }, tv.name + (tv.selfOwner ? ' (মালিক নিজে)' : ''));
       put('teacherPrivate', { ...priv, id: saved.id, bkash, nagad, rocket, bank }, tv.name);
+      // ধরন বদলালে এই শিক্ষকের আগের সব ফি-এর অংশ নতুন করে হিসাব (মালিক হলে ০)
+      if (changed) applyWrites(db.payments.filter((p) => paymentTeacher(p) === saved.id).map((p) => ['set', 'shares', p.id, computeShare(p)])).then(() => render());
       toast('শিক্ষক সেভ হয়েছে');
     },
   });
@@ -1734,7 +1747,7 @@ function payoutForm(teacherId) {
     submitLabel: 'পরিশোধ করুন',
     values: { teacherId: teacherId || '', amount: due > 0 ? due : '', date: today(), method: PAY_METHODS[0], note: `${monthLabel(thisMonth())}-এর সম্মানী` },
     fields: [
-      { name: 'teacherId', label: 'শিক্ষক', type: 'select', required: true, options: db.teachers.map((t) => [t.id, `${t.name} — বাকি ${tk(teacherAccount(t.id).balance)}`]), placeholder: '— বাছাই করুন —' },
+      { name: 'teacherId', label: 'শিক্ষক', type: 'select', required: true, options: payTeachers().map((t) => [t.id, `${t.name} — বাকি ${tk(teacherAccount(t.id).balance)}`]), placeholder: '— বাছাই করুন —' },
       ...(teacherId ? [{ name: 'payinfo', type: 'info', label: 'শিক্ষকের পেমেন্টের তথ্য', text: info || 'দেওয়া নেই' }] : []),
       { name: 'amount', label: 'টাকার পরিমাণ (আংশিকও দেওয়া যাবে)', type: 'number', required: true },
       { name: 'date', label: 'তারিখ', type: 'date', required: true },
@@ -2407,7 +2420,7 @@ function buildTeacherViews() {
 }
 
 function buildTeacherStatements() {
-  return db.teachers.map((t) => {
+  return payTeachers().map((t) => {
     const months = {};
     const add = (m, k, v) => { (months[m] ||= { share: 0, paid: 0 })[k] += v; };
     for (const p of db.payments) if (paymentTeacher(p) === t.id) add(p.date.slice(0, 7), 'share', paymentShare(p));
