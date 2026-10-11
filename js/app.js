@@ -1246,8 +1246,8 @@ views.accounts = () => {
     <td class="num ${r.type === 'income' ? 'up' : 'down'}">${tk(r.amount)}</td>
     <td class="actions">${r.kind === 'income' || r.kind === 'expense'
       ? `<button class="btn sm" data-action="edit-txn" data-kind="${r.kind}" data-id="${r.id}">এডিট</button>${isOwnerRole() ? ` <button class="btn sm danger" data-action="del-txn" data-kind="${r.kind}" data-id="${r.id}">মুছুন</button>` : ''}`
-      : r.kind === 'payout' ? `<button class="btn sm" data-action="payout-slip" data-id="${r.id}">স্লিপ</button>`
-      : r.kind === 'staffPayout' ? `<button class="btn sm" data-action="staff-slip" data-id="${r.id}">স্লিপ</button>`
+      : r.kind === 'payout' ? `<button class="btn sm" data-action="payout-slip" data-id="${r.id}">স্লিপ</button>${isOwnerRole() ? ` <button class="btn sm danger" data-action="del-payout" data-id="${r.id}">মুছুন</button>` : ''}`
+      : r.kind === 'staffPayout' ? `<button class="btn sm" data-action="staff-slip" data-id="${r.id}">স্লিপ</button>${isOwnerRole() ? ` <button class="btn sm danger" data-action="del-staff-payout" data-id="${r.id}">মুছুন</button>` : ''}`
       : `<button class="btn sm" data-action="receipt" data-id="${r.id}">রসিদ</button>`}</td></tr>`);
 
   return `
