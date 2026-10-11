@@ -114,6 +114,7 @@ textarea { min-height: 80px; resize: vertical; }
 .field .days label { display: inline-flex; align-items: center; gap: 4px; margin: 0; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; }
 .days input { width: auto; }
 .sync { margin-left: auto; font-size: 14px; color: #fff; text-decoration: none; background: rgba(255,255,255,.15); padding: 4px 10px; border-radius: 99px; white-space: nowrap; }
+.sync.hidden { display: none; }
 .sync.warn, .sync.error { background: #ffd8d4; color: var(--red); font-weight: 600; }
 .note { background: var(--amber-soft); color: var(--amber); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; }
 
@@ -144,3 +145,14 @@ dialog h2 { font-size: 20px; }
   main { margin: 0; padding: 0; }
   body { background: #fff; }
 }
+
+/* লগইন ও অনুমতি */
+body.auth .sidebar, body.auth .menu-btn { display: none; }
+body.auth main { margin-left: 0; }
+.login-card { max-width: 420px; margin: 40px auto; background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 28px 24px; text-align: center; }
+.login-logo { width: 160px; display: block; margin: 0 auto 16px; }
+.btn.big { font-size: 17px; padding: 12px 22px; }
+.userbox { margin-top: 16px; padding: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; font-size: 14px; word-break: break-all; }
+.switch { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+.switch input { width: 20px; height: 20px; }
+.info-box { background: var(--primary-soft); color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 14px; }

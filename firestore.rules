@@ -1,0 +1,121 @@
+rules_version = '2';
+
+// At-Turath Academy — ডেটাবেসের নিরাপত্তা নিয়ম
+// ভূমিকা: owner (মালিক) · admin (অ্যাডমিন) · teacher (শিক্ষক)
+// মালিকের Gmail নিচে OWNER_EMAIL-এ বসানো। বাকিদের অনুমতি members/{email} ডকুমেন্টে থাকে,
+// যেটা শুধু মালিক লিখতে পারেন।
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function owner() { return 'OWNER_EMAIL'; }
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function email() { return request.auth.token.email.lower(); }
+    function isOwner() { return signedIn() && email() == owner(); }
+    function memberPath() { return /databases/$(database)/documents/members/$(email()); }
+    function member() { return get(memberPath()).data; }
+    function hasRole(r) { return signedIn() && exists(memberPath()) && member().role == r && member().get('active', true) != false; }
+    function isAdmin() { return hasRole('admin'); }
+    function isTeacher() { return hasRole('teacher'); }
+    function myTeacherId() { return member().teacherId; }
+    // মালিক বা অ্যাডমিন
+    function isStaff() { return isOwner() || isAdmin(); }
+    function reportsOn() {
+      return get(/databases/$(database)/documents/settings/main).data.get('adminReports', false) == true;
+    }
+    // অ্যাডমিন যা লিখবে তাতে তার নিজের ইমেইল থাকতে হবে
+    function stampedBy() { return request.resource.data.get('by', '') == email(); }
+
+    // ---------- লগইন ও অনুমতি ----------
+    match /members/{memberEmail} {
+      allow read: if isOwner() || (signedIn() && memberEmail == email());
+      allow write: if isOwner();
+    }
+
+    match /settings/{id} {
+      allow read: if isOwner() || isAdmin() || isTeacher();
+      allow write: if isOwner();
+    }
+
+    // ---------- শিক্ষক ----------
+    match /teachers/{id} {
+      allow read: if isStaff() || (isTeacher() && id == myTeacherId());
+      allow write: if isOwner();
+    }
+    // শিক্ষকের পেমেন্টের তথ্য (বিকাশ/নগদ/ব্যাংক): মালিক আর সেই শিক্ষক
+    match /teacherPrivate/{id} {
+      allow read, write: if isOwner() || (isTeacher() && id == myTeacherId());
+    }
+    // শিক্ষকের দেখার জন্য তৈরি তথ্য (নাম, ক্লাসের সময়, লিংক, ফলাফল — ফোন বা ফি নেই)
+    match /teacherView/{id} {
+      allow read: if isStaff() || (isTeacher() && resource.data.teacherId == myTeacherId());
+      allow write: if isStaff();
+    }
+    // শিক্ষকের নিজের হিসাবের সারাংশ (মালিকের অ্যাপ হিসাব করে লেখে)
+    match /teacherStatements/{id} {
+      allow read: if isOwner() || (isTeacher() && id == myTeacherId());
+      allow write: if isOwner();
+    }
+
+    // ---------- পড়াশোনা ----------
+    match /batches/{id} {
+      allow read: if isStaff();
+      allow write: if isOwner();
+    }
+    match /students/{id} {
+      allow read: if isStaff();
+      allow create: if isOwner() || (isAdmin() && stampedBy());
+      // অ্যাডমিন এডিট করতে পারবে, কিন্তু মাসিক ফি বদলাতে পারবে না
+      allow update: if isOwner() || (isAdmin() && stampedBy()
+        && request.resource.data.get('monthlyFee', 0) == resource.data.get('monthlyFee', 0));
+      allow delete: if isOwner();
+    }
+    match /exams/{id} {
+      allow read: if isStaff();
+      allow create, update: if isOwner() || (isAdmin() && stampedBy());
+      allow delete: if isOwner();
+    }
+
+    // ---------- আয় ----------
+    match /payments/{id} {
+      allow read: if isStaff();
+      allow create, update: if isOwner() || (isAdmin() && stampedBy());
+      allow delete: if isOwner();
+    }
+    match /incomes/{id} {
+      allow read: if isStaff();
+      allow create, update: if isOwner() || (isAdmin() && stampedBy());
+      allow delete: if isOwner();
+    }
+
+    // ---------- শুধু মালিক ----------
+    match /expenses/{id} { allow read, write: if isOwner(); }
+    match /payRules/{id} { allow read, write: if isOwner(); }
+    match /shares/{id} { allow read, write: if isOwner(); }
+    match /teacherPayouts/{id} { allow read, write: if isOwner(); }
+    match /staff/{id} { allow read, write: if isOwner(); }
+    match /staffPayouts/{id} { allow read, write: if isOwner(); }
+    match /staffEntries/{id} { allow read, write: if isOwner(); }
+    match /commissions/{id} { allow read, write: if isOwner(); }
+
+    // স্টাফের শুধু নাম (ভর্তির সময় "ভর্তি করিয়েছেন" বাছাইয়ের জন্য)
+    match /staffNames/{id} {
+      allow read: if isStaff();
+      allow write: if isOwner();
+    }
+
+    // মাসিক রিপোর্টের সারাংশ: মালিক; সেটিংসে সুইচ চালু থাকলে অ্যাডমিনও
+    match /summaries/{month} {
+      allow read: if isOwner() || (isAdmin() && reportsOn());
+      allow write: if isOwner();
+    }
+
+    // কার্যক্রমের রেকর্ড: সবাই নিজের নামে লিখতে পারে, শুধু মালিক পড়তে পারেন, কেউ বদলাতে/মুছতে পারে না
+    match /auditLog/{id} {
+      allow create: if (isOwner() || isAdmin() || isTeacher()) && stampedBy();
+      allow read: if isOwner();
+    }
+  }
+}
