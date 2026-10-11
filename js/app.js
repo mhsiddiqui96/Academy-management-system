@@ -2618,6 +2618,14 @@ function scheduleReconcile() {
 function loginError(e) {
   if (!e || e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
   console.error(e);
+  if (e.code === 'auth/unauthorized-domain') {
+    const url = `https://console.firebase.google.com/project/${FB_CONFIG.projectId}/authentication/settings`;
+    $('#main').innerHTML = `<div class="login-card"><img src="icons/logo.png" alt="" class="login-logo">
+      <p>⚠️ লগইন চালু করতে আরেকটা ধাপ বাকি: Firebase-এ <b>${esc(location.hostname)}</b> ঠিকানাটা "Authorized domains"-এ যোগ করতে হবে।</p>
+      <p><a class="btn primary" target="_blank" rel="noopener" href="${esc(url)}">Firebase-এর সেই পেজ খুলুন</a></p>
+      <p class="muted">সেখানে Authorized domains → Add domain → <b>${esc(location.hostname)}</b> লিখে Add চাপুন, তারপর এই পেজ রিফ্রেশ করুন।</p></div>`;
+    return;
+  }
   alert('লগইন করা যায়নি: ' + (e.code || e.message));
 }
 
